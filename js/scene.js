@@ -281,7 +281,7 @@
     }
   }
 
-  // 第 8 层：起点黑白格（2 列 × 3 行，每格 12px，沿法向铺开）+ 2px 白边
+  // 第 8 层：起点标记——'grid' 黑白格（2 列 × 3 行，每格 12px）或 'lines' 双白线（对照参考图终点线）
   function drawStartLine(ctx, track) {
     var st = track.startLine;
     if (!st) return;
@@ -294,16 +294,23 @@
     ctx.translate(st.x, st.y);
     ctx.rotate(st.angle);
 
-    for (var col = 0; col < START_COLS; col++) {
-      for (var row = 0; row < START_ROWS; row++) {
-        ctx.fillStyle = ((col + row) % 2 === 0) ? COL.ink : START_WHITE;
-        ctx.fillRect(x0 + col * START_CELL, y0 + row * START_CELL, START_CELL, START_CELL);
+    if (track.startLineStyle === 'lines') {
+      ctx.fillStyle = START_WHITE;
+      for (var li = -1; li <= 1; li += 2) {
+        ctx.fillRect(li * 7 - 2, -gridW / 2, 4, gridW);
       }
+    } else {
+      for (var col = 0; col < START_COLS; col++) {
+        for (var row = 0; row < START_ROWS; row++) {
+          ctx.fillStyle = ((col + row) % 2 === 0) ? COL.ink : START_WHITE;
+          ctx.fillRect(x0 + col * START_CELL, y0 + row * START_CELL, START_CELL, START_CELL);
+        }
+      }
+      ctx.lineWidth = START_EDGE;
+      ctx.strokeStyle = START_WHITE;
+      ctx.strokeRect(x0, y0, gridW, gridH);
     }
 
-    ctx.lineWidth = START_EDGE;
-    ctx.strokeStyle = START_WHITE;
-    ctx.strokeRect(x0, y0, gridW, gridH);
     ctx.restore();
   }
 

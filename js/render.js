@@ -586,6 +586,21 @@
     ctx.fillText('P1：W 或空格 油门　　P2：↑ / Enter / 右 Shift 油门', W / 2, 396);
     ctx.fillText('P 暂停　M 静音　R 重开　Enter 开始', W / 2, 428);
 
+    // 赛道选择器：◀ 名称 ▶（左右方向键切换，localStorage 记忆）
+    var trackCount = Number(s.trackCount) || 0;
+    if (trackCount > 1) {
+      var selY = 364;
+      setFont(ctx, 'bold', 20);
+      ctx.fillStyle = COL.ink;
+      ctx.fillText('◀　' + (s.trackName || '') + '　▶', W / 2, selY);
+      setFont(ctx, 'normal', 13);
+      ctx.fillStyle = 'rgba(43,35,32,.6)';
+      ctx.fillText(s.trackDesc || '', W / 2, selY + 20);
+      setFont(ctx, 'normal', 12);
+      ctx.fillStyle = 'rgba(43,35,32,.55)';
+      ctx.fillText('←/→ 切换赛道（共 ' + trackCount + ' 条）', W / 2, selY + 38);
+    }
+
     // 1Hz 呼吸闪烁（0.45~1，纸卡上不用金色）
     setFont(ctx, 'bold', 22);
     ctx.fillStyle = COL.ink;

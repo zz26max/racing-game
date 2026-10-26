@@ -133,3 +133,58 @@ test('比赛：两车全油门 70 秒内完赛，冠军跑满 3 圈且排名第�
   assert.equal(race.winner.lapTimes.length, 3, '冠军应记录 3 个圈速，实际 ' + race.winner.lapTimes.length);
   assert.equal(raceMod.standings(race)[0], race.winner, '排名第一应为冠军');
 });
+
+// 5) 阁楼赛道：几何断言 + 治理驾驶（模拟玩家收油过弯）完赛
+// 说明：阁楼赛道弯道较紧（最紧 r44，脱轨阈值 sqrt(950*44)≈204px/s），
+// 全油门机器人会在每个弯道反复脱轨（设计如此，技术赛道惩罚激进驾驶），
+// 因此完赛测试使用治理型油门：接近弯道限速时收油，模拟真实玩家操作。
+test('阁楼赛道：几何合法，治理驾驶 150 秒内完赛 3 圈且零脱轨', () => {
+  const track = trackMod.createTrack('attic');
+
+  assert.equal(track.id, 'attic', '赛道 id 应为 attic');
+  assert.ok(track.totalLength >= 3400 && track.totalLength <= 4100,
+    'totalLength 应在 3400-4100，实际 ' + track.totalLength.toFixed(0));
+  const p0 = track.sampleAt(0);
+  assert.ok(Math.abs(Math.hypot(p0.tx, p0.ty) - 1) <= 0.001, '起点切线应为单位向量');
+  const back = track.nearestS(track.sampleAt(700).x, track.sampleAt(700).y);
+  assert.ok(Math.abs(back - 700) < 5, 'nearestS 应可反查弧长');
+  // 桥面高程：平段 36，引桥末端 0
+  const sc = track.bridge.sCenter;
+  assert.ok(track.elevationAt(sc) === track.bridge.height, '桥面平段高程应为 bridge.height');
+  assert.ok(track.elevationAt(sc + track.bridge.rampHalf) === 0, '引桥末端高程应为 0');
+
+  const cars = [
+    carMod.createCar({ lane: 1, name: 'P1' }),
+    carMod.createCar({ lane: -1, name: 'P2' })
+  ];
+  const race = raceMod.createRace({ track: track, cars: cars, laps: 3 });
+  const DT = 1 / 120;
+  const GOVERNOR = 190;   // 直道目标速度
+  let derails = 0;
+  for (let i = 0; i < Math.round(150 / DT) && race.phase !== 'finished'; i++) {
+    const thr = [];
+    for (const e of race.entries) {
+      const ahead = track.cornerLimit(e.car.s + 60);
+      const target = Math.min(GOVERNOR, isFinite(ahead) ? ahead * 0.95 : GOVERNOR);
+      thr.push(e.car.speed < target ? 1 : 0);
+    }
+    raceMod.update(race, DT, thr);
+    for (const e of race.entries) {
+      if (e.car.justDerailed) { derails += 1; e.car.justDerailed = false; }
+    }
+  }
+
+  assert.equal(race.phase, 'finished', '150 秒内应完赛，实际阶段 ' + race.phase);
+  assert.ok(race.winner && race.winner.lapTimes.length === 3, '冠军应跑满 3 圈');
+  assert.ok(derails === 0, '治理驾驶应零脱轨，实际 ' + derails + ' 次');
+});
+
+// 6) 赛道注册表：两条赛道均可创建，未知 id 回落默认
+test('赛道注册表：listTracks 返回双赛道，未知 id 回落 8 字环道', () => {
+  const list = trackMod.listTracks();
+  assert.ok(list.length >= 2, '至少两条赛道');
+  assert.ok(list.some(t => t.id === 'figure8'), '应包含 figure8');
+  assert.ok(list.some(t => t.id === 'attic'), '应包含 attic');
+  const fallback = trackMod.createTrack('不存在的赛道');
+  assert.equal(fallback.id, 'figure8', '未知 id 应回落 figure8');
+});

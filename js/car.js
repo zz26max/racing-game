@@ -387,11 +387,19 @@
           // 归位目标不得落在桥面正下方的相机死角：沿赛道向后退出该区，车随后正常从桥下驶过
           var totalLen = Number(trackObj.totalLength) || 0;
           if (totalLen > 0) {
-            var back = 0;
-            while (slotUnderDeck(trackObj, car.s) && back < 80) {
-              car.s -= 12;
+            // 双向扫描走廊出口，取更近的一侧退出（桥下走廊内含弯道时，
+            // 固定向后退出会把车送回弯道入口，重新加速再次脱轨形成死循环）
+            var backSteps = 81, fwdSteps = 81;
+            for (var k = 1; k <= 80; k++) {
+              if (backSteps === 81 && !slotUnderDeck(trackObj, car.s - 12 * k)) backSteps = k;
+              if (fwdSteps === 81 && !slotUnderDeck(trackObj, car.s + 12 * k)) fwdSteps = k;
+              if (backSteps !== 81 && fwdSteps !== 81) break;
+            }
+            if (fwdSteps < backSteps) {
+              car.s = (car.s + 12 * fwdSteps) % totalLen;   // 前向退出走廊（跳过桥下段）
+            } else if (backSteps <= 80) {
+              car.s -= 12 * backSteps;
               if (car.s < 0) car.s += totalLen;
-              back++;
             }
           }
           car.derailPhase = 'return';

@@ -241,6 +241,7 @@
     if (!gl || !gl.scene || !root.THREE) return gl;
     var T = root.THREE;
 
+    gl.track = track || gl.track || null;   // 切赛道时由 gl.setTrack 更新，逐帧同步读到最新
     var g1 = makeCar(0xE8503A, 1, T);
     var g2 = makeCar(0x2F8FD6, 2, T);
     var cars = [g1, g2];
@@ -255,12 +256,13 @@
       var t = Number(time);
       if (!isFinite(t)) t = 0;
       var entries = race && race.entries;
-      if (entries && track && typeof track.pointAt === 'function') {
+      var tk = gl.track || track;
+      if (entries && tk && typeof tk.pointAt === 'function') {
         for (var i = 0; i < cars.length; i++) {
           var entry = entries[i];
           var car = entry && entry.car;
           if (!car || !cars[i]) continue;
-          try { syncCar(cars[i], car, track, t); } catch (err) { /* 单车同步失败不影响整帧 */ }
+          try { syncCar(cars[i], car, tk, t); } catch (err) { /* 单车同步失败不影响整帧 */ }
         }
       }
       if (typeof orig === 'function') return orig.apply(gl, arguments);

@@ -1,16 +1,22 @@
-/* 槽车赛道：双纽线（8 字，自交 1 次）中心线 + 立体交叉（一处跨线桥）+ 双槽车道（UMD：浏览器挂 window.RaceTrack，Node 走 module.exports） */
+/* 槽车赛道：多赛道注册表 + 中心线管线 + 立体交叉 + 双槽车道
+ * （UMD：浏览器挂 window.RaceTrack，Node 走 module.exports）
+ *
+ * 赛道定义（TRACK_DEFS）：
+ *  - figure8  双纽线 8 字（参数化生成，自交 1 次，桥在交点）
+ *  - attic    阁楼复刻（线段+圆弧描述，无中心线自交，桥下扫掠道穿过桥面走廊）
+ *
+ * 每条赛道由 buildPoints() 给出中心线折线（含行进方向），其余
+ * （弧长表、采样、曲率、弯道、接缝、出生点）走统一管线；
+ * 桥参数（crest/halfLength/height/rampHalf）按赛道配置。
+ */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.RaceTrack = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) {
+    var util;
+    try { util = require('./util.js'); } catch (e) { util = null; }
+    module.exports = factory(util);
+  } else root.RaceTrack = factory(root.RaceUtil);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (RaceUtil) {
   'use strict';
-
-  // 中心线几何参数（逻辑空间 1280×720，俯视）
-  // 中心线为双纽线 x = A·sin t、y = B·sin 2t，t ∈ [0, 2π)，均匀取 POINT_COUNT 个点（含 t=0，不含 t=2π）。
-  // 曲线在 (0,0) 处自交一次：t=0 那一遍为上层桥面，t=π 那一遍从桥下穿过，平面位置相同。
-  var LEMN_A = 405;             // 双纽线 x 幅值
-  var LEMN_B = 215;             // 双纽线 y 幅值（y = B·sin 2t，故 bbox 高 2B = 430）
-  var POINT_COUNT = 1600;       // 中心线采样点数（t = 2π·i / POINT_COUNT）
 
   var TRACK_WIDTH = 84;         // 赛道总宽
   var LANE_OFFSET = 22;         // 车道中心线相对中心线的法向距离（两槽相距 44 > 车宽 30）
@@ -24,33 +30,293 @@
   var CORNER_REFINE = 8;        // 区间端点的二分细化次数
   var GRIP = 500;               // 弯道限速的默认抓地常数（cornerLimit 的第二参数可覆盖）
 
-  // 立体交叉：桥中心在 s=0（t=0 那一遍），桥面 |d|<=70 处高 36，70→240 平滑落到地面
-  var BRIDGE = {
-    sCenter: 0,
-    halfLength: 70,
-    height: 36,
-    clearance: 32,
-    rampHalf: 240,
-    deckThickness: 4
-  };
-
-  // 允许的自交点数量：双纽线自交 1 次，两个通过点在平面上重合，判重后计 1 个
-  var ALLOWED_INTERSECTIONS = 1;
   var INTERSECT_EPS = 1e-6;     // 线段参数容差（允许端点接触）
   var INTERSECT_DEDUPE = 1;     // 交点判重的平面距离阈值（px）
 
-  // 两点距离
   function dist(ax, ay, bx, by) {
     var dx = bx - ax, dy = by - ay;
     return Math.sqrt(dx * dx + dy * dy);
   }
 
-  // 双纽线中心线：t 从 0 扫到 2π（不含终点），顺序即行驶方向
-  function generateCenterline() {
-    var pts = new Array(POINT_COUNT);
-    for (var i = 0; i < POINT_COUNT; i++) {
-      var t = 2 * Math.PI * i / POINT_COUNT;
-      pts[i] = { x: LEMN_A * Math.sin(t), y: LEMN_B * Math.sin(2 * t) };
+  // ---- 赛道定义 ----
+  var TRACK_DEFS = [
+    {
+      id: 'figure8',
+      name: '8 字环道',
+      desc: '双纽线 · 中央立交',
+      startLineStyle: 'grid',
+      bridge: { sCenter: 0, halfLength: 70, height: 36, clearance: 32, rampHalf: 240, deckThickness: 4, railSpan: 70 },
+      buildPoints: function () {
+        // 双纽线 x = A·sin t、y = B·sin 2t，t ∈ [0, 2π)，均匀采样（含 t=0 不含 2π）
+        // 曲线在 (0,0) 处自交一次：t=0 一遍为上层桥面，t=π 一遍从桥下穿过
+        var A = 405, B = 215, COUNT = 1600;
+        var pts = new Array(COUNT);
+        for (var i = 0; i < COUNT; i++) {
+          var t = 2 * Math.PI * i / COUNT;
+          pts[i] = { x: A * Math.sin(t), y: B * Math.sin(2 * t) };
+        }
+        return pts;
+      },
+      // 断言：恰好 1 个自交，一遍在桥上、另一遍从桥下穿过（s≈total/2）
+      assert: function (points, sArr, total, bridge) {
+        var list = findCenterlineIntersections(points, sArr, total);
+        if (list.length !== 1) {
+          throw new Error('8 字赛道中心线自交数为 ' + list.length + '，应恰好为 1');
+        }
+        var half = total / 2;
+        var onDeck = 0, underDeck = 0;
+        for (var i = 0; i < list[0].passes.length; i++) {
+          var d = normDelta(list[0].passes[i], bridge.sCenter, total);
+          if (Math.abs(d) <= bridge.halfLength) onDeck += 1;
+          else if (Math.abs(Math.abs(d) - half) <= bridge.halfLength) underDeck += 1;
+        }
+        if (onDeck < 1) throw new Error('8 字赛道交点缺少桥面上的一遍');
+        if (underDeck < 1) throw new Error('8 字赛道交点缺少桥下的一遍（s≈total/2）');
+      },
+      pickStartS: function (points, sArr) {
+        // t=π/2 对应的点下标
+        return sArr[Math.round(1600 * 0.25)];
+      }
+    },
+    {
+      id: 'attic',
+      name: '阁楼复刻',
+      desc: '原版布局 · S 弯 + 中央高架',
+      startLineStyle: 'lines',
+      bridge: {
+        crest: { x: 12, y: -167 },          // 桥面平段中点（sCenter 取最近采样点弧长）
+        halfLength: 70, height: 36, clearance: 32, rampHalf: 280, deckThickness: 4,
+        railSpan: 170                        // 黄护栏覆盖平段+大部分引桥（对照参考图）
+      },
+      startAt: { x: 236, y: -168 },          // 起跑线（顶直道，行进方向向西）
+      buildPoints: function () {
+        // 海龟绘图描述（对照参考图逆向；旅行方向：起点直道向西）
+        // 命令：['F', dist] 前进；['R', deg, r] 右转；['L', deg, r] 左转
+        var CMDS = [
+          ['F', 471],
+          ['R', 90, 55], ['F', 21], ['L', 90, 55], ['F', 76],
+          ['L', 90, 55], ['F', 93],
+          ['L', 70, 70], ['F', 100], ['R', 110, 60], ['F', 25], ['R', 50, 45], ['F', 90],
+          ['L', 180, 60], ['F', 78], ['L', 75, 90], ['F', 257],
+          ['R', 75, 55], ['F', 30], ['R', 90, 55], ['F', 60],
+          ['L', 90, 55], ['R', 90, 50], ['R', 90, 46], ['F', 30],
+          ['L', 90, 44], ['F', 70], ['L', 90, 46], ['F', 341],
+          ['L', 90, 65], ['F', 252], ['L', 90, 120]
+        ];
+        return buildTurtlePoints([346, -168], 180, CMDS);
+      },
+      // 断言：每个中心线自交都必须是"桥下穿越"——一遍在桥面平段（高程 ≥30）、
+      // 另一遍在地面且平面位置落在桥面路基范围内；走廊重叠段须在平段 ±45 弧长内（净空 ≥7px）
+      assert: function (points, sArr, total, bridge) {
+        var sc = bridge.sCenter;
+        var n = points.length;
+        var halfW = TRACK_WIDTH / 2;
+        function elevAt(s) {
+          var d = Math.abs(normDelta(s, sc, total));
+          if (d <= bridge.halfLength) return bridge.height;
+          if (d >= bridge.rampHalf) return 0;
+          var u = (d - bridge.halfLength) / (bridge.rampHalf - bridge.halfLength);
+          return bridge.height * (1 - u * u * (3 - 2 * u));
+        }
+        var list = findCenterlineIntersections(points, sArr, total);
+        for (var v = 0; v < list.length; v++) {
+          var ix = list[v];
+          var onDeck = 0, onGround = 0;
+          for (var w = 0; w < ix.passes.length; w++) {
+            if (elevAt(ix.passes[w]) >= 30) onDeck += 1;
+            else if (elevAt(ix.passes[w]) < 1) onGround += 1;
+          }
+          if (!(onDeck >= 1 && onGround >= 1 && ix.passes.length >= 2)) {
+            throw new Error('阁楼赛道自交点 (' + ix.x.toFixed(0) + ',' + ix.y.toFixed(0) + ') 不是合法的桥下穿越');
+          }
+        }
+        for (var i = 0; i < n; i += 3) {
+          var s = sArr[i];
+          if (elevAt(s) > 1) continue;                                            // 自己在桥上
+          if (Math.abs(normDelta(s, sc, total)) < bridge.rampHalf + 80) continue; // 同车道引坡衔接
+          var bestD = Infinity, bestS2 = -1;
+          for (var j = 0; j < n; j += 3) {
+            var s2 = sArr[j];
+            if (Math.abs(normDelta(s2, sc, total)) > bridge.rampHalf) continue;
+            var dd = dist(points[i].x, points[i].y, points[j].x, points[j].y);
+            if (dd < bestD) { bestD = dd; bestS2 = s2; }
+          }
+          if (bestD < halfW && Math.abs(normDelta(bestS2, sc, total)) > bridge.halfLength + 60) {
+            throw new Error('阁楼赛道桥下穿越超出平段范围（净空不足）：s=' + s.toFixed(0));
+          }
+        }
+      },
+      pickStartS: function (points, sArr, def) {
+        // 起跑线取离 startAt 最近的采样点
+        var best = 0, bd = Infinity;
+        for (var i = 0; i < points.length; i++) {
+          var d = dist(points[i].x, points[i].y, def.startAt.x, def.startAt.y);
+          if (d < bd) { bd = d; best = i; }
+        }
+        return sArr[best];
+      }
+    }
+  ];
+
+  // ---- 海龟命令 → 中心线折线（含 CR 平滑 + 均匀重采样 + 轻 fairing）----
+  function buildTurtlePoints(start, heading, cmds) {
+    var D2R = Math.PI / 180;
+    var pts = [];
+    var x = start[0], y = start[1], h = heading;
+    pts.push([x, y]);
+    for (var c = 0; c < cmds.length; c++) {
+      var cmd = cmds[c];
+      if (cmd[0] === 'F') {
+        var n = Math.max(1, Math.round(cmd[1] / 30));
+        for (var i = 1; i <= n; i++) {
+          x += cmd[1] * Math.cos(h * D2R) / n;
+          y += cmd[1] * Math.sin(h * D2R) / n;
+          pts.push([x, y]);
+        }
+      } else {
+        var delta = (cmd[0] === 'L' ? -1 : 1) * cmd[1], r = cmd[2];
+        var sgn = delta > 0 ? 1 : -1;
+        var cx = x + r * Math.cos((h + 90 * sgn) * D2R);
+        var cy = y + r * Math.sin((h + 90 * sgn) * D2R);
+        var a0 = Math.atan2(y - cy, x - cx);
+        var sweep = delta * D2R;
+        var m = Math.max(2, Math.ceil(Math.abs(delta) / 15));
+        for (var j = 1; j <= m; j++) {
+          var a = a0 + sweep * j / m;
+          pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+        }
+        x = pts[pts.length - 1][0];
+        y = pts[pts.length - 1][1];
+        h = ((h + delta) % 360 + 360) % 360;
+      }
+    }
+    // 闭合：末点贴近首点时用末点替换首点（保留末段方向）
+    if (pts.length > 2) {
+      var f = pts[0], l = pts[pts.length - 1];
+      if (dist(f[0], f[1], l[0], l[1]) < 2) { pts[0] = l; pts.pop(); }
+    }
+
+    // Catmull-Rom 平滑（消线/弧交接的弦切差；15° 密点下样条贴合圆弧）
+    var cr = [];
+    var cnt = pts.length;
+    for (var seg = 0; seg < cnt; seg++) {
+      var p0 = pts[(seg - 1 + cnt) % cnt], p1 = pts[seg], p2 = pts[(seg + 1) % cnt], p3 = pts[(seg + 2) % cnt];
+      for (var t = 0; t < 6; t++) {
+        var u = t / 6, u2 = u * u, u3 = u2 * u;
+        var b0 = -0.5 * u3 + u2 - 0.5 * u;
+        var b1 = 1.5 * u3 - 2.5 * u2 + 1;
+        var b2 = -1.5 * u3 + 2 * u2 + 0.5 * u;
+        var b3 = 0.5 * u3 - 0.5 * u2;
+        cr.push({ x: b0 * p0[0] + b1 * p1[0] + b2 * p2[0] + b3 * p3[0], y: b0 * p0[1] + b1 * p1[1] + b2 * p2[1] + b3 * p3[1] });
+      }
+    }
+
+    // 均匀重采样（2px）
+    var res = [];
+    var carry = 0;
+    for (var q = 0; q < cr.length; q++) {
+      var a = cr[q], b = cr[(q + 1) % cr.length];
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1e-9) continue;
+      var sAcc = 2 - carry;
+      while (sAcc <= len) {
+        res.push({ x: a.x + dx * sAcc / len, y: a.y + dy * sAcc / len });
+        sAcc += 2;
+      }
+      carry = len - (sAcc - 2);
+    }
+
+    // 2 遍轻 fairing
+    for (var p2 = 0; p2 < 2; p2++) {
+      var m2 = res.length;
+      var fo = new Array(m2);
+      for (var fi = 0; fi < m2; fi++) {
+        var fa = res[(fi - 1 + m2) % m2], fb = res[fi], fc = res[(fi + 1) % m2];
+        fo[fi] = { x: fb.x + 0.1 * (fa.x + fc.x - 2 * fb.x), y: fb.y + 0.1 * (fa.y + fc.y - 2 * fb.y) };
+      }
+      res = fo;
+    }
+    return res;
+  }
+
+  // 带符号弧长差（环绕取模，落在 (-total/2, total/2]）
+  function normDelta(s, s0, total) {
+    var d = s - s0;
+    var half = total / 2;
+    if (d > half) d -= total;
+    if (d < -half) d += total;
+    return d;
+  }
+
+  // 两条线段求交（含端点接触）
+  function segmentIntersection(a, b, c, d) {
+    var rx = b.x - a.x, ry = b.y - a.y;
+    var sx = d.x - c.x, sy = d.y - c.y;
+    var denom = rx * sy - ry * sx;
+    if (!(Math.abs(denom) > 1e-9)) return null;
+    var qx = c.x - a.x, qy = c.y - a.y;
+    var t = (qx * sy - qy * sx) / denom;
+    var u = (qx * ry - qy * rx) / denom;
+    if (t < -INTERSECT_EPS || t > 1 + INTERSECT_EPS) return null;
+    if (u < -INTERSECT_EPS || u > 1 + INTERSECT_EPS) return null;
+    return { x: a.x + rx * t, y: a.y + ry * t, t: t, u: u };
+  }
+
+  // 中心线自交检测：按平面位置判重，返回 [{ x, y, passes }]
+  function findCenterlineIntersections(points, sArr, total) {
+    var n = points.length;
+    var hits = [];
+    for (var i = 0; i < n; i++) {
+      var a = points[i], b = points[(i + 1) % n];
+      for (var j = i + 2; j < n; j++) {
+        if (i === 0 && j === n - 1) continue;
+        var c = points[j], d = points[(j + 1) % n];
+        var hit = segmentIntersection(a, b, c, d);
+        if (!hit) continue;
+        var segI = sArr[i + 1] - sArr[i];
+        var segJ = sArr[j + 1] - sArr[j];
+        hits.push({
+          x: hit.x, y: hit.y,
+          passes: [
+            normDelta(sArr[i] + hit.t * segI, 0, total),
+            normDelta(sArr[j] + hit.u * segJ, 0, total)
+          ]
+        });
+      }
+    }
+    // 判重：同一平面位置只留一条记录，passes 合并
+    var merged = [];
+    for (var h = 0; h < hits.length; h++) {
+      var found = null;
+      for (var m = 0; m < merged.length; m++) {
+        if (dist(hits[h].x, hits[h].y, merged[m].x, merged[m].y) <= INTERSECT_DEDUPE) { found = merged[m]; break; }
+      }
+      if (found) {
+        for (var q = 0; q < hits[h].passes.length; q++) found.passes.push(hits[h].passes[q]);
+      } else {
+        merged.push({ x: hits[h].x, y: hits[h].y, passes: hits[h].passes.slice() });
+      }
+    }
+    return merged;
+  }
+
+  // 折线按弧长均匀重采样
+  function resampleUniform(raw, step) {
+    var pts = [];
+    var count = raw.length;
+    var carry = 0;
+    for (var i = 0; i < count; i++) {
+      var a = raw[i], b = raw[(i + 1) % count];
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1e-9) continue;
+      var sAcc = step - carry;
+      while (sAcc <= len) {
+        pts.push({ x: a.x + dx * sAcc / len, y: a.y + dy * sAcc / len });
+        sAcc += step;
+      }
+      carry = len - (sAcc - step);
     }
     return pts;
   }
@@ -67,7 +333,7 @@
     return { sArr: sArr, total: sArr[n] };
   }
 
-  // 二分查找 s 所在线段下标 i（满足 sArr[i] <= s <= sArr[i+1]）
+  // 二分查找 s 所在线段下标
   function findSegment(sArr, s) {
     var lo = 0, hi = sArr.length - 1;
     while (lo < hi - 1) {
@@ -87,101 +353,58 @@
     return v;
   }
 
-  // 两条线段求交（含端点接触）：返回交点与两个线段参数，平行/不相交返回 null
-  function segmentIntersection(a, b, c, d) {
-    var rx = b.x - a.x, ry = b.y - a.y;
-    var sx = d.x - c.x, sy = d.y - c.y;
-    var denom = rx * sy - ry * sx;
-    if (!(Math.abs(denom) > 1e-9)) return null;   // 平行或退化
-    var qx = c.x - a.x, qy = c.y - a.y;
-    var t = (qx * sy - qy * sx) / denom;
-    var u = (qx * ry - qy * rx) / denom;
-    if (t < -INTERSECT_EPS || t > 1 + INTERSECT_EPS) return null;
-    if (u < -INTERSECT_EPS || u > 1 + INTERSECT_EPS) return null;
-    return { x: a.x + rx * t, y: a.y + ry * t, t: t, u: u };
-  }
+  // 生成赛道对象
+  function createTrack(id) {
+    var def = null;
+    for (var i = 0; i < TRACK_DEFS.length; i++) {
+      if (TRACK_DEFS[i].id === id) { def = TRACK_DEFS[i]; break; }
+    }
+    if (!def) def = TRACK_DEFS[0];
 
-  // 中心线自交检测：非相邻线段两两求交，按平面位置判重后返回 [{ x, y, passes }]
-  // passes 记录每个通过点的弧长（每条命中的线段一个），供桥面范围校验
-  function findCenterlineIntersections(points, sArr, total) {
-    var n = points.length;
-    var hits = [];
-    for (var i = 0; i < n; i++) {
-      var a = points[i], b = points[(i + 1) % n];
-      for (var j = i + 1; j < n; j++) {
-        // 跳过相邻线段（共用一个顶点）与首尾相邻
-        if (j === i + 1 || (i === 0 && j === n - 1)) continue;
-        var c = points[j], d = points[(j + 1) % n];
-        var hit = segmentIntersection(a, b, c, d);
-        if (!hit) continue;
-        var segI = sArr[i + 1] - sArr[i];
-        var segJ = sArr[j + 1] - sArr[j];
-        hits.push({
-          x: hit.x, y: hit.y,
-          passes: [
-            normalizeS(sArr[i] + hit.t * segI, total),
-            normalizeS(sArr[j] + hit.u * segJ, total)
-          ]
-        });
+    var segPoints = def.buildPoints();
+    // 密控制点过 Catmull-Rom：弧线贴合、线/弧交接的微小切线差被平滑掉
+    var smoothed = (RaceUtil && typeof RaceUtil.catmullRomClosed === 'function')
+      ? RaceUtil.catmullRomClosed(segPoints, 6)
+      : segPoints;
+    var points = resampleUniform(smoothed, 2);
+    // 2 遍轻 fairing：消残余折角
+    for (var f = 0; f < 2; f++) {
+      var m2 = points.length;
+      var fo = new Array(m2);
+      for (var fi = 0; fi < m2; fi++) {
+        var fa = points[(fi - 1 + m2) % m2], fb = points[fi], fc = points[(fi + 1) % m2];
+        fo[fi] = { x: fb.x + 0.1 * (fa.x + fc.x - 2 * fb.x), y: fb.y + 0.1 * (fa.y + fc.y - 2 * fb.y) };
       }
+      points = fo;
     }
-
-    // 判重：同一平面位置只留一条记录，passes 合并
-    var merged = [];
-    for (var h = 0; h < hits.length; h++) {
-      var p = hits[h], found = null;
-      for (var m = 0; m < merged.length; m++) {
-        if (dist(p.x, p.y, merged[m].x, merged[m].y) <= INTERSECT_DEDUPE) { found = merged[m]; break; }
-      }
-      if (found) {
-        for (var q = 0; q < p.passes.length; q++) found.passes.push(p.passes[q]);
-      } else {
-        merged.push({ x: p.x, y: p.y, passes: p.passes.slice() });
-      }
-    }
-    return merged;
-  }
-
-  // 中心线自交断言：允许恰好 1 个交点，且该交点必须落在桥面范围内（一遍在桥上、另一遍从桥下穿过）
-  function assertCenterlineIntersections(points, sArr, total) {
-    var list = findCenterlineIntersections(points, sArr, total);
-    if (list.length !== ALLOWED_INTERSECTIONS) {
-      throw new Error('赛道中心线自交数为 ' + list.length + '，应恰好为 ' + ALLOWED_INTERSECTIONS +
-        '（双纽线在 (0,0) 处自交一次）');
-    }
-    var x = list[0].x, y = list[0].y;
-    var half = total / 2;
-    var onDeck = 0, underDeck = 0;
-    for (var i = 0; i < list[0].passes.length; i++) {
-      var s = list[0].passes[i];
-      var d = s - BRIDGE.sCenter;
-      if (d > half) d -= total;
-      if (d < -half) d += total;
-      if (Math.abs(d) <= BRIDGE.halfLength) onDeck += 1;
-      else if (Math.abs(Math.abs(d) - half) <= BRIDGE.halfLength) underDeck += 1;
-    }
-    if (onDeck < 1) {
-      throw new Error('中心线交点 (' + x.toFixed(2) + ', ' + y.toFixed(2) + ') 不在桥面范围内（|s| > ' +
-        BRIDGE.halfLength + '）');
-    }
-    if (underDeck < 1) {
-      throw new Error('中心线交点 (' + x.toFixed(2) + ', ' + y.toFixed(2) + ') 缺少桥下的另一遍（s≈total/2）');
-    }
-  }
-
-  // 生成赛道对象（中心线、车道、接缝、出生点、立体交叉、采样查询）
-  function createTrack() {
-    var points = generateCenterline();
     var table = buildArcTable(points);
     var sArr = table.sArr;
     var totalLength = table.total;
     var n = points.length;
 
-    assertCenterlineIntersections(points, sArr, totalLength);
+    // 桥参数：sCenter 取 crest 最近采样点弧长（未配置 crest 的用定义值）
+    var bridge = {
+      sCenter: def.bridge.sCenter !== undefined ? def.bridge.sCenter : 0,
+      halfLength: def.bridge.halfLength,
+      height: def.bridge.height,
+      clearance: def.bridge.clearance,
+      rampHalf: def.bridge.rampHalf,
+      deckThickness: def.bridge.deckThickness,
+      railSpan: def.bridge.railSpan || 70
+    };
+    if (def.bridge.crest) {
+      var bd = Infinity, bi = 0;
+      for (var c = 0; c < n; c++) {
+        var cd = dist(points[c].x, points[c].y, def.bridge.crest.x, def.bridge.crest.y);
+        if (cd < bd) { bd = cd; bi = c; }
+      }
+      bridge.sCenter = sArr[bi];
+    }
 
-    // 起跑线弧长：t=π/2 对应的点下标（t = 2π·i/N）
-    var startIdx = Math.round(POINT_COUNT * 0.25);
-    var START_S = sArr[startIdx];
+    def.assert(points, sArr, totalLength, bridge);
+
+    // 起跑线弧长
+    var START_S = normalizeS(def.pickStartS(points, sArr, def), totalLength);
 
     // 归一化弧长处的中心点采样，切线为单位向量
     function sampleRaw(s) {
@@ -196,20 +419,18 @@
       return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, tx: tx, ty: ty };
     }
 
-    // 任意弧长处的中心点与单位切线
     function sampleAt(s) {
       var p = sampleRaw(normalizeS(s, totalLength));
       return { x: p.x, y: p.y, tx: p.tx, ty: p.ty };
     }
 
-    // 中心点沿法向 (-ty, tx) 偏移 lane × 22 后的位置
     function pointAt(s, lane) {
       var p = sampleRaw(normalizeS(s, totalLength));
       var off = (lane === undefined ? 0 : Number(lane) || 0) * LANE_OFFSET;
       return { x: p.x - p.ty * off, y: p.y + p.tx * off };
     }
 
-    // 带符号曲率（1/px）：前后各取 6px 三点拟合，符号由叉积决定
+    // 带符号曲率（1/px）
     function curvatureAt(s) {
       var base = normalizeS(s, totalLength);
       var p0 = sampleRaw(normalizeS(base - CURVATURE_STEP, totalLength));
@@ -221,12 +442,10 @@
       var denom = Math.sqrt(ax * ax + ay * ay) * Math.sqrt(bx * bx + by * by) *
         dist(p0.x, p0.y, p2.x, p2.y);
       if (!(denom > 0)) return 0;
-      var k = 2 * Math.abs(cross) / denom; // 4 × 三角形面积 / (三边乘积)
+      var k = 2 * Math.abs(cross) / denom;
       return cross < 0 ? -k : k;
     }
 
-    // 弯道限速：由向心加速度 a=GRIP 反推 v = sqrt(GRIP / |k|)；直道不限速返回 Infinity
-    // grip 省略时取默认 GRIP = 500
     function cornerLimit(s, grip) {
       var g = (grip === undefined || grip === null) ? GRIP : Number(grip);
       if (!(g > 0)) g = GRIP;
@@ -234,41 +453,33 @@
       return k > 1e-6 ? Math.sqrt(g / k) : Infinity;
     }
 
-    // 到桥中心 s=0 的最短带符号弧长距离（环绕取模，结果落在 (-total/2, total/2]）
+    // 到桥中心的带符号弧长距离
     function bridgeDelta(s) {
-      var d = normalizeS(s, totalLength) - BRIDGE.sCenter;
-      var half = totalLength / 2;
-      if (d > half) d -= totalLength;
-      if (d < -half) d += totalLength;
-      return d;
+      return normDelta(normalizeS(s, totalLength), bridge.sCenter, totalLength);
     }
 
-    // 立体交叉高度：桥面 |d| <= 70 为 36；70→240 用 smoothstep 平滑落回 0
+    // 立体交叉高度：平段 |d| <= halfLength 为 height；→ rampHalf 平滑落回 0
     function elevationAt(s) {
       var d = Math.abs(bridgeDelta(s));
-      if (d <= BRIDGE.halfLength) return BRIDGE.height;
-      if (d >= BRIDGE.rampHalf) return 0;
-      var u = (d - BRIDGE.halfLength) / (BRIDGE.rampHalf - BRIDGE.halfLength);
+      if (d <= bridge.halfLength) return bridge.height;
+      if (d >= bridge.rampHalf) return 0;
+      var u = (d - bridge.halfLength) / (bridge.rampHalf - bridge.halfLength);
       var sm = u * u * (3 - 2 * u);
-      return BRIDGE.height * (1 - sm);
+      return bridge.height * (1 - sm);
     }
 
-    // 纵向坡度：中心差分 elevationAt(s+0.5) - elevationAt(s-0.5)
     function slopeAt(s) {
       return elevationAt(s + 0.5) - elevationAt(s - 0.5);
     }
 
-    // 弯道区间：沿弧长扫描 |curvatureAt(s)| > CORNER_K 的连续段，记为 { s0, s1, side }
-    // side = +1 左转（曲率正）/ -1 右转（曲率负）；跨越 s=0 的弯道在 s=total 处断开
+    // 弯道区间（红白路肩与刹车提示用）
     function buildCorners() {
       var m = Math.max(2, Math.ceil(totalLength / CORNER_SCAN_STEP));
       var ds = totalLength / m;
       var list = [];
-      var runStart = -1;  // 当前区间起始采样下标
-      var runSign = 0;    // 区间内曲率符号累加，用多数符号定 side
+      var runStart = -1, runSign = 0;
       var i, k;
 
-      // 二分求阈值穿越的弧长：lo 在区间外、hi 在区间内（顺序不限）
       function refineEdge(lo, hi) {
         for (var t = 0; t < CORNER_REFINE; t++) {
           var mid = (lo + hi) / 2;
@@ -293,12 +504,21 @@
           runStart = -1;
         }
       }
-      // 收尾：区间一直延伸到 total，说明弯道被 s=0 / total 边界切断，终点取 total
       if (runStart >= 0) closeRun(m);
-      return list;
+      // 合并间距过小的同侧区间（线/弧衔接处的曲率跳变会把弯道切碎）
+      var merged = [];
+      for (i = 0; i < list.length; i++) {
+        var last = merged[merged.length - 1];
+        if (last && list[i].side === last.side && list[i].s0 - last.s1 < 30) {
+          last.s1 = list[i].s1;
+        } else {
+          merged.push({ s0: list[i].s0, s1: list[i].s1, side: list[i].side });
+        }
+      }
+      return merged;
     }
 
-    // 最近点弧长：遍历所有线段做点投影，取距离最小处
+    // 最近点弧长
     function nearestS(x, y) {
       var bestD2 = Infinity, bestS = 0;
       for (var i = 0; i < n; i++) {
@@ -318,16 +538,14 @@
       return normalizeS(bestS, totalLength);
     }
 
-    // 弯道区间（红白路肩与刹车提示用）
     var corners = buildCorners();
 
-    // 接缝：沿弧长每 160px 一个，跳过距起点 80px 内的（含环回侧）
+    // 接缝：沿弧长每 160px 一个，跳过距起点 80px 内的
     var seams = [];
     for (var seamS = SEAM_SPACING; seamS < totalLength; seamS += SEAM_SPACING) {
       var nearStart = Math.min(seamS, totalLength - seamS);
       if (nearStart < SEAM_START_GAP) continue;
       var sp = sampleRaw(seamS);
-      // 接缝线垂直于赛道，angle 为法向 (-ty, tx) 的方向角
       seams.push({ x: sp.x, y: sp.y, angle: Math.atan2(sp.tx, -sp.ty) });
     }
 
@@ -335,20 +553,20 @@
     var spawnDefs = [{ back: 60, lane: 1 }, { back: 120, lane: -1 }];
     var spawns = [];
     for (var k = 0; k < spawnDefs.length; k++) {
-      var def = spawnDefs[k];
-      var ps = normalizeS(START_S - def.back, totalLength);
-      var p = sampleRaw(ps);
-      var off = def.lane * LANE_OFFSET;
+      var sdef = spawnDefs[k];
+      var ps = normalizeS(START_S - sdef.back, totalLength);
+      var pp = sampleRaw(ps);
+      var off = sdef.lane * LANE_OFFSET;
       spawns.push({
-        x: p.x - p.ty * off,
-        y: p.y + p.tx * off,
-        angle: Math.atan2(p.ty, p.tx),
-        lane: def.lane
+        x: pp.x - pp.ty * off,
+        y: pp.y + pp.tx * off,
+        angle: Math.atan2(pp.ty, pp.tx),
+        lane: sdef.lane
       });
     }
 
-    // 起跑线中心点，angle 为法向方向角（黑白格沿该方向横跨赛道）
-    var startSample = sampleRaw(normalizeS(START_S, totalLength));
+    // 起跑线中心点
+    var startSample = sampleRaw(START_S);
     var startLine = {
       x: startSample.x,
       y: startSample.y,
@@ -356,6 +574,10 @@
     };
 
     return {
+      id: def.id,
+      name: def.name,
+      desc: def.desc,
+      startLineStyle: def.startLineStyle || 'grid',
       points: points,
       laneOffset: LANE_OFFSET,
       width: TRACK_WIDTH,
@@ -366,14 +588,7 @@
       corners: corners,
       startS: START_S,
       spawns: spawns,
-      bridge: {
-        sCenter: BRIDGE.sCenter,
-        halfLength: BRIDGE.halfLength,
-        height: BRIDGE.height,
-        clearance: BRIDGE.clearance,
-        rampHalf: BRIDGE.rampHalf,
-        deckThickness: BRIDGE.deckThickness
-      },
+      bridge: bridge,
       sampleAt: sampleAt,
       pointAt: pointAt,
       curvatureAt: curvatureAt,
@@ -385,8 +600,18 @@
     };
   }
 
+  // 赛道列表（标题选择用）
+  function listTracks() {
+    var list = [];
+    for (var i = 0; i < TRACK_DEFS.length; i++) {
+      list.push({ id: TRACK_DEFS[i].id, name: TRACK_DEFS[i].name, desc: TRACK_DEFS[i].desc });
+    }
+    return list;
+  }
+
   return {
     createTrack: createTrack,
+    listTracks: listTracks,
     carWidth: CAR_WIDTH,
     carHeight: CAR_HEIGHT,
     laneOffset: LANE_OFFSET,

@@ -6,6 +6,7 @@
   var STEP = 1 / 120;      // 固定物理步长（秒）
   var MAX_STEPS = 6;       // 单帧最多补 6 步，避免卡顿后雪崩
   var BEST_KEY = 'slotrace.best';
+  var TRACK_KEY = 'slotrace.track';   // 标题界面选择的赛道（localStorage 持久化）
   var FALLBACK = '#C98B55';
   var DEFAULT_LAPS = 3;    // 默认圈数（无头截图可用 ?laps=N 覆盖）
   var MAX_FF_STEPS = 72000; // ?ff 快进上限（600 秒），防止参数异常卡死
@@ -16,6 +17,8 @@
   var hudCtx = hudCanvas ? hudCanvas.getContext('2d') : null;
   var dpr = 1, scaleX = 1, scaleY = 1;
   var track = null, scene = null, input = null, audio = null, gl = null;
+  var trackId = 'figure8';              // 当前赛道 id
+  var trackList = [];                   // 可选赛道元信息（id/name/desc）
   var phase = 'title', race = null, time = 0, best = null;
   var pausedFrom = null, acc = 0, last = 0, warmed = false;
   var freeze = false;   // ?freeze=1：快进后冻结比赛推进，只保留渲染与 rAF
@@ -36,6 +39,20 @@
   function toMs(sec) {
     var ms = Math.round(Number(sec) * 1000);
     return isFinite(ms) && ms >= 0 ? ms : 0;
+  }
+
+  // 读赛道 id：URL ?track= 优先，其次 localStorage；未注册的 id 回落默认
+  function readTrackId() {
+    var search = window.location.search || '';
+    var m = new RegExp('(?:\?|&)track=([^&]*)').exec(search);
+    if (m) {
+      try { return decodeURIComponent(m[1]); } catch (err) { return m[1]; }
+    }
+    try {
+      var saved = window.localStorage.getItem(TRACK_KEY);
+      if (saved) return saved;
+    } catch (err) { /* 隐私模式静默 */ }
+    return null;
   }
 
   // 读 URL 里的单个数值参数；缺失/非法返回 null
@@ -59,7 +76,14 @@
 
   // 各模块降级初始化：缺哪个都不阻塞其余部分
   function init() {
-    try { track = window.RaceTrack ? window.RaceTrack.createTrack() : null; } catch (err) { track = null; }
+    if (window.RaceTrack && typeof window.RaceTrack.listTracks === 'function') {
+      trackList = window.RaceTrack.listTracks();
+      var saved = readTrackId();
+      for (var i = 0; i < trackList.length; i++) {
+        if (trackList[i].id === saved) { trackId = saved; break; }
+      }
+    }
+    try { track = window.RaceTrack ? window.RaceTrack.createTrack(trackId) : null; } catch (err) { track = null; trackId = 'figure8'; }
     try {
       var built = window.RaceScene && track ? window.RaceScene.build(track) : null;
       scene = built && built.canvas ? built.canvas : null;
@@ -90,9 +114,36 @@
     acc = 0;
   }
 
+  // 标题界面切换赛道：重建赛道、2D 底图与 3D 场景（车模/灯光保留）
+  function switchTrack(dir) {
+    if (!window.RaceTrack || trackList.length < 2) return;
+    var idx = 0;
+    for (var i = 0; i < trackList.length; i++) {
+      if (trackList[i].id === trackId) { idx = i; break; }
+    }
+    idx = (idx + dir + trackList.length) % trackList.length;
+    trackId = trackList[idx].id;
+    try { window.localStorage.setItem(TRACK_KEY, trackId); } catch (err) { /* 隐私模式静默 */ }
+    try { track = window.RaceTrack.createTrack(trackId); } catch (err) { return; }
+    try {
+      var built = window.RaceScene && window.RaceScene.build ? window.RaceScene.build(track) : null;
+      scene = built && built.canvas ? built.canvas : null;
+    } catch (err2) { scene = null; }
+    if (gl && typeof gl.setTrack === 'function') {
+      try { gl.setTrack(track); } catch (err3) { gl = null; }   // 3D 重建失败整体回落 2D
+    }
+    if (audio && typeof audio.resume === 'function') audio.resume();
+  }
+
   // Enter 开始 / R 重开 / P 暂停 / M 静音 / Esc 回标题
   function handleInput() {
     if (!input) return;
+    if (phase === 'title') {
+      if (input.consume('left')) { switchTrack(-1); return; }
+      if (input.consume('right')) { switchTrack(1); return; }
+    }
+    input.consume('left');
+    input.consume('right');
     if (input.consume('start') && (phase === 'title' || phase === 'finished')) startRace();
     if (input.consume('restart')) startRace();
     if (input.consume('mute') && audio) audio.setMuted(!audio.isMuted());
@@ -233,12 +284,22 @@
     }
   }
 
+  // 当前赛道在列表中的下标
+  function trackIndex() {
+    for (var i = 0; i < trackList.length; i++) {
+      if (trackList[i].id === trackId) return i;
+    }
+    return 0;
+  }
+
   // 当前帧的渲染快照（3D 与 2D 兜底、HUD 共用同一份状态）
   function snapshot() {
     return {
       track: track, scene: scene, phase: phase, time: time,
       countdownT: race ? race.countdown - race.t : 0,
-      race: race, best: best, particles: []
+      race: race, best: best, particles: [],
+      trackName: track ? track.name : '', trackDesc: track ? track.desc : '',
+      trackIndex: trackIndex(), trackCount: trackList.length
     };
   }
 

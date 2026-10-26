@@ -147,7 +147,7 @@
 
   // 立体交叉装饰：桥面两侧黄色护栏（含引桥段）+ 桥墩 + 桥下投影
   var RAIL_COLOR = 0xf2b544;
-  var RAIL_S0 = -70;      // 桥面弧长范围（与 track.elevationAt 的平段一致）
+  var RAIL_S0 = -70;      // 桥面弧长范围默认值（track.bridge.railSpan 可覆盖）
   var RAIL_S1 = 70;
   var RAIL_STEP = 5;      // 每 5px 一根
   var RAIL_GAP = 2;       // 护栏离路面边缘的横向间隙
@@ -155,7 +155,7 @@
   var RAIL_DEPTH_PAD = 1; // 立方体沿走向略加长，弯道上相邻块不留缝
 
   var PIER_COLOR = 0x8c96a3;
-  var PIER_S0 = -180;     // 桥墩弧长范围（覆盖落坡段）
+  var PIER_S0 = -180;     // 桥墩弧长范围默认值（随 railSpan 扩展）
   var PIER_S1 = 180;
   var PIER_STEP = 60;
   var PIER_RADIUS = 4;
@@ -481,13 +481,17 @@
     var sides = [1, -1];
     var si, s, p, off, mesh, h;
 
+    // 护栏跨度：track.bridge.railSpan 可覆盖（阁楼赛道的护栏覆盖平段+大部分引桥）
+    var railS0 = (track.bridge && isFinite(Number(track.bridge.railSpan))) ? -Number(track.bridge.railSpan) : RAIL_S0;
+    var railS1 = (track.bridge && isFinite(Number(track.bridge.railSpan))) ? Number(track.bridge.railSpan) : RAIL_S1;
+
     var railGeo = new THREE.BoxGeometry(WALL_THICK, RAIL_H, RAIL_STEP + RAIL_DEPTH_PAD);
     var railMat = new THREE.MeshStandardMaterial({ color: RAIL_COLOR, roughness: 0.55, metalness: 0 });
     var pierMat = new THREE.MeshStandardMaterial({ color: PIER_COLOR, roughness: 0.8, metalness: 0 });
 
     // 护栏：贴着桥面两侧，底面随该处赛道高度抬升，Y 轴转到赛道走向
     for (si = 0; si < sides.length; si++) {
-      for (s = RAIL_S0; s <= RAIL_S1; s += RAIL_STEP) {
+      for (s = railS0; s <= railS1; s += RAIL_STEP) {
         p = track.sampleAt(s);
         off = railOff * sides[si];
         mesh = new THREE.Mesh(railGeo, railMat);
@@ -503,9 +507,9 @@
       }
     }
 
-    // 桥墩：站在地面（y=0）上，高 = 该处赛道高度，落在路面边缘正下方
+    // 桥墩：站在地面（y=0）上，高 = 该处赛道高度，落在路面边缘正下方（范围随护栏跨度扩展）
     for (si = 0; si < sides.length; si++) {
-      for (s = PIER_S0; s <= PIER_S1; s += PIER_STEP) {
+      for (s = railS0 - 40; s <= railS1 + 40; s += PIER_STEP) {
         h = elev(track, s);
         if (!(h > 0)) continue;   // 平地处不立墩
         p = track.sampleAt(s);
@@ -561,22 +565,43 @@
     return tex;
   }
 
-  // 起跑线：track.startLine 处 84×24 的黑白格平面，绕 Y 转到与赛道垂直
+  // 起跑线：track.startLine 处 84×24 的黑白格平面（或双白线样式），绕 Y 转到与赛道垂直
   function buildStart(track) {
     var start = track ? track.startLine : null;
     if (!start) return null;
+    var style = track.startLineStyle || 'grid';
+    var group = new THREE.Group();
 
-    var mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(STARTLINE_W, STARTLINE_D),
-      new THREE.MeshStandardMaterial({ map: makeStartTexture(), roughness: 0.85, metalness: 0 })
-    );
-    // 先绕 X 摊平到地面，再绕 Y 转到法向 (-ty, tx)；start.angle 即该法向的方向角
-    mesh.rotation.set(-Math.PI / 2, 0, -(Number(start.angle) || 0));
-    // 整块平面按起点弧长处的高度平移（起点在平地，实际等于 STARTLINE_Y）
-    mesh.position.set(Number(start.x) || 0, STARTLINE_Y + elev(track, track.startS), Number(start.y) || 0);
-    mesh.receiveShadow = true;
-    if (activeScene) activeScene.add(mesh);
-    return mesh;
+    if (style === 'lines') {
+      // 双白线：两条 84×4 白条，沿切向间隔 14（对照参考图的终点线）
+      var lineMat = new THREE.MeshStandardMaterial({ color: 0xf4f1e8, roughness: 0.85, metalness: 0 });
+      for (var li = -1; li <= 1; li += 2) {
+        var bar = new THREE.Mesh(new THREE.PlaneGeometry(STARTLINE_W, 4), lineMat);
+        bar.rotation.set(-Math.PI / 2, 0, -(Number(start.angle) || 0));
+        var along = li * 7;   // 沿切向偏移
+        var na = Number(start.angle) || 0;
+        var tx = Math.sin(na + Math.PI / 2), tz = Math.cos(na + Math.PI / 2);
+        bar.position.set(
+          (Number(start.x) || 0) + tx * along,
+          STARTLINE_Y + elev(track, track.startS),
+          (Number(start.y) || 0) + tz * along
+        );
+        bar.receiveShadow = true;
+        group.add(bar);
+      }
+    } else {
+      var mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(STARTLINE_W, STARTLINE_D),
+        new THREE.MeshStandardMaterial({ map: makeStartTexture(), roughness: 0.85, metalness: 0 })
+      );
+      mesh.rotation.set(-Math.PI / 2, 0, -(Number(start.angle) || 0));
+      mesh.position.set(Number(start.x) || 0, STARTLINE_Y + elev(track, track.startS), Number(start.y) || 0);
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+
+    if (activeScene) activeScene.add(group);
+    return group;
   }
 
   // 固定机位：脱轨时不再后拉，始终用 BASE
@@ -637,16 +662,46 @@
     carpet.receiveShadow = true;
     scene.add(carpet);
 
-    // 赛道：路面 + 两侧槽线 + 弯道路肩 + 护栏 + 起跑线
-    activeScene = scene;
-    if (track) {
-      buildSurface(track);
-      buildSlots(track);
-      buildKerbs(track);
-      buildWalls(track);
-      buildBridge(track);
-      buildStart(track);
+    // 赛道：路面 + 两侧槽线 + 弯道路肩 + 护栏 + 起跑线（收进独立分组，便于切赛道时整体重建）
+    var trackGroup = new THREE.Group();
+    scene.add(trackGroup);
+    api.trackGroup = trackGroup;
+    api.track = track || null;
+    buildTrackInto(trackGroup, track);
+
+    // 赛道几何构建（build 与 setTrack 共用）
+    function buildTrackInto(group, tk) {
+      activeScene = group;
+      if (tk) {
+        buildSurface(tk);
+        buildSlots(tk);
+        buildKerbs(tk);
+        buildWalls(tk);
+        buildBridge(tk);
+        buildStart(tk);
+      }
+      activeScene = null;
     }
+
+    // 切换赛道：释放旧赛道几何并按新赛道重建（车模与灯光保留）
+    api.setTrack = function (tk) {
+      if (!trackGroup) return;
+      var children = trackGroup.children.slice();
+      for (var i = 0; i < children.length; i++) {
+        var child = children[i];
+        trackGroup.remove(child);
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            for (var m = 0; m < child.material.length; m++) child.material[m].dispose();
+          } else {
+            child.material.dispose();
+          }
+        }
+      }
+      api.track = tk || null;
+      buildTrackInto(trackGroup, tk);
+    };
 
     // 画布尺寸随 CSS 盒变化
     function resize() {

@@ -45,6 +45,8 @@
     var carMaterial = null;
     var carBody = null;
     var staticsBuilt = false;
+    var staticsTrack = null;   // 静态体所属赛道（切赛道时重建）
+    var staticBodies = [];     // 已加入 world 的静态体清单
 
     // 已落地计时与飞行累计时间
     var startTime = 0;
@@ -82,6 +84,7 @@
         qTilt.setFromAxisAngle(new CANNON.Vec3(-dz, 0, dx), Math.atan(slope));
         qTilt.mult(qYaw, body.quaternion);
         world.addBody(body);
+        staticBodies.push(body);
       }
     }
 
@@ -119,6 +122,7 @@
           body.position.set(pm.x - ty * lat * side, cy, pm.y + tx * lat * side);
           body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw);
           world.addBody(body);
+          staticBodies.push(body);
         }
       }
     }
@@ -129,11 +133,18 @@
       buildDeck(track, halfW);
       buildWallRing(track, halfW);
       staticsBuilt = true;
+      staticsTrack = track;
     }
 
     // 该车首次 begin 时建自己的 world、地面与静态桥面，之后复用（只在本车内复用）
     function ensureWorld(track) {
       if (world) {
+        if (staticsBuilt && staticsTrack !== track) {
+          // 切换赛道：拆掉旧静态体，按新赛道重建（车体与地面保留）
+          for (var i = 0; i < staticBodies.length; i++) world.removeBody(staticBodies[i]);
+          staticBodies.length = 0;
+          staticsBuilt = false;
+        }
         if (!staticsBuilt && track) buildStatics(track);
         return;
       }

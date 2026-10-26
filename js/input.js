@@ -13,7 +13,7 @@
   // 空格与方向键会滚动页面，按下时统一拦截
   var PREVENT = { Space: true, ArrowUp: true, ArrowDown: true, ArrowLeft: true, ArrowRight: true };
   // 事件边沿名字，consume 后清空
-  var EDGES = ['start', 'pause', 'restart', 'mute', 'back'];
+  var EDGES = ['start', 'pause', 'restart', 'mute', 'back', 'left', 'right'];
 
   // 有 e.code 就用 e.code，老浏览器按 e.key 兜底
   function toCode(e) {
@@ -64,6 +64,8 @@
         else if (code === 'KeyM') fire('mute');
         else if (code === 'Enter') fire('start');
         else if (code === 'Escape') fire('back');
+        else if (code === 'ArrowLeft') fire('left');
+        else if (code === 'ArrowRight') fire('right');
       }
       held[code] = true;
     }
