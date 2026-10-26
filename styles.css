@@ -1,0 +1,34 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #1B1714;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 两层画布叠放：#game 放 3D，画面尺寸由 main.js 的 16:9 letterbox 计算后写入内联样式 */
+#game,
+#hud {
+  display: block;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: transparent;
+}
+
+/* HUD 是只读叠加层，不吃鼠标事件 */
+#hud {
+  pointer-events: none;
+}
+
+#selftest[hidden] {
+  display: none;
+}
