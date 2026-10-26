@@ -1,1 +1,5 @@
-_debug/
+# 调试产物不入库（README 已声明不属于游戏运行链路），仅保留三个可重跑的回归探针
+_debug/*
+!_debug/_derail-probe.js
+!_debug/_flight-probe.js
+!_debug/_occlusion-probe.js
