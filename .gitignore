@@ -3,3 +3,5 @@ _debug/*
 !_debug/_derail-probe.js
 !_debug/_flight-probe.js
 !_debug/_occlusion-probe.js
+!_debug/_mk-attic-track.js
+!_debug/_seg-audit.js
