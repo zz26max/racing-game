@@ -581,31 +581,27 @@
     ctx.fillStyle = 'rgba(43,35,32,.75)';
     ctx.fillText('《双人成行》阁楼小游戏 · 程序化复刻', W / 2, 330);
 
-    setFont(ctx, 'normal', 17);
-    ctx.fillStyle = COL.ink;
-    ctx.fillText('P1：W 或空格 油门　　P2：↑ / Enter / 右 Shift 油门', W / 2, 396);
-    ctx.fillText('P 暂停　M 静音　R 重开　Enter 开始', W / 2, 428);
-
     // 赛道选择器：◀ 名称 ▶（左右方向键切换，localStorage 记忆）
     var trackCount = Number(s.trackCount) || 0;
     if (trackCount > 1) {
-      var selY = 364;
       setFont(ctx, 'bold', 20);
       ctx.fillStyle = COL.ink;
-      ctx.fillText('◀　' + (s.trackName || '') + '　▶', W / 2, selY);
+      ctx.fillText('◀　' + (s.trackName || '') + '　▶', W / 2, 368);
       setFont(ctx, 'normal', 13);
       ctx.fillStyle = 'rgba(43,35,32,.6)';
-      ctx.fillText(s.trackDesc || '', W / 2, selY + 20);
-      setFont(ctx, 'normal', 12);
-      ctx.fillStyle = 'rgba(43,35,32,.55)';
-      ctx.fillText('←/→ 切换赛道（共 ' + trackCount + ' 条）', W / 2, selY + 38);
+      ctx.fillText(s.trackDesc || '', W / 2, 392);
     }
+
+    setFont(ctx, 'normal', 17);
+    ctx.fillStyle = COL.ink;
+    ctx.fillText('P1：W 或空格 油门　　P2：↑ / Enter / 右 Shift 油门', W / 2, 420);
+    ctx.fillText((trackCount > 1 ? '←/→ 切赛道　' : '') + 'P 暂停　M 静音　R 重开', W / 2, 446);
 
     // 1Hz 呼吸闪烁（0.45~1，纸卡上不用金色）
     setFont(ctx, 'bold', 22);
     ctx.fillStyle = COL.ink;
     ctx.globalAlpha = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
-    ctx.fillText('按 Enter 开始', W / 2, 466);
+    ctx.fillText('点击页面后按 Enter 开始', W / 2, 470);
     ctx.globalAlpha = 1;
 
     ctx.restore();

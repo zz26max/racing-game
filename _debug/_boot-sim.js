@@ -60,6 +60,19 @@ function runFrames(count, stepMs) {
   }
 }
 var now = 0;
+// 最小 AudioContext 桩（真实浏览器里 resume/振荡器都可用，这里只保证不抛错）
+class AudioContextStub {
+  constructor() { this.currentTime = 0; this.sampleRate = 44100; this.destination = {}; this.state = 'running'; }
+  resume() { return Promise.resolve(); }
+  createGain() { return { connect: noop, disconnect: noop, gain: param() }; }
+  createOscillator() { return { connect: noop, disconnect: noop, start: noop, stop: noop, type: '', frequency: param(), detune: param() }; }
+  createBiquadFilter() { return { connect: noop, disconnect: noop, type: '', frequency: param(), Q: param(), detune: param() }; }
+  createDynamicsCompressor() { return { connect: noop, disconnect: noop, threshold: param(), knee: param(), ratio: param(), attack: param(), release: param() }; }
+  createBuffer(ch, len, rate) { return { getChannelData: () => new Float32Array(len || 1) }; }
+  createBufferSource() { return { connect: noop, disconnect: noop, start: noop, stop: noop, buffer: null, playbackRate: param() }; }
+  createWaveShaper() { return { connect: noop, disconnect: noop, curve: null, oversample: '' }; }
+}
+function param() { return { value: 0, setValueAtTime: noop, linearRampToValueAtTime: noop, exponentialRampToValueAtTime: noop, setTargetAtTime: noop, cancelScheduledValues: noop }; }
 // window 与 globalThis 同一对象（与浏览器一致），UMD 挂载与 window.* 引用互通
 const windowStub = {
   innerWidth: 1280, innerHeight: 720, devicePixelRatio: 1,
@@ -84,6 +97,7 @@ for (const f of scripts) {
   const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   try {
     const fn = new Function('window', 'document', 'globalThis', 'self', 'module', 'exports', 'require', src);
+    windowStub.AudioContext = AudioContextStub;
     fn(windowStub, documentStub, windowStub, windowStub, undefined, undefined, undefined);
     console.log('  ✓', f);
   } catch (err) {

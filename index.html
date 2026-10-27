@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>赛车小游戏</title>
+  <script>
+    // 全局错误收集：控制台之外的运行时错误也可在 window.__ERRORS__ 里查看
+    window.__ERRORS__ = [];
+    window.addEventListener('error', function (e) {
+      window.__ERRORS__.push(String(e.message || e) + ' @' + (e.filename || '') + ':' + (e.lineno || 0));
+    });
+  </script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,17 +20,17 @@
 
   <script src="vendor/three.min.js"></script>
   <script src="vendor/cannon.min.js"></script>
-  <script src="js/util.js"></script>
-  <script src="js/track.js"></script>
-  <script src="js/car.js"></script>
-  <script src="js/race.js"></script>
-  <script src="js/scene.js"></script>
-  <script src="js/render.js"></script>
-  <script src="js/gl.js"></script>
-  <script src="js/gl-cars.js"></script>
-  <script src="js/flight-physics.js"></script>
-  <script src="js/input.js"></script>
-  <script src="js/audio.js"></script>
-  <script src="js/main.js"></script>
+  <script src="js/util.js?v=2"></script>
+  <script src="js/track.js?v=2"></script>
+  <script src="js/car.js?v=2"></script>
+  <script src="js/race.js?v=2"></script>
+  <script src="js/scene.js?v=2"></script>
+  <script src="js/render.js?v=2"></script>
+  <script src="js/gl.js?v=2"></script>
+  <script src="js/gl-cars.js?v=2"></script>
+  <script src="js/flight-physics.js?v=2"></script>
+  <script src="js/input.js?v=2"></script>
+  <script src="js/audio.js?v=2"></script>
+  <script src="js/main.js?v=2"></script>
 </body>
 </html>

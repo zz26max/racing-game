@@ -411,6 +411,7 @@
   }
 
   window.addEventListener('keydown', warmAudio, false);
+  window.addEventListener('pointerdown', function () { try { window.focus(); } catch (err) { /* 忽略 */ } }, false);
   window.addEventListener('pointerdown', warmAudio, false);
   window.addEventListener('resize', resize, false);
 
