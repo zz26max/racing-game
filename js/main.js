@@ -44,7 +44,7 @@
   // 读赛道 id：URL ?track= 优先，其次 localStorage；未注册的 id 回落默认
   function readTrackId() {
     var search = window.location.search || '';
-    var m = new RegExp('(?:\?|&)track=([^&]*)').exec(search);
+    var m = new RegExp('(?:\\?|&)track=([^&]*)').exec(search);
     if (m) {
       try { return decodeURIComponent(m[1]); } catch (err) { return m[1]; }
     }

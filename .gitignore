@@ -5,3 +5,4 @@ _debug/*
 !_debug/_occlusion-probe.js
 !_debug/_mk-attic-track.js
 !_debug/_seg-audit.js
+!_debug/_boot-sim.js
