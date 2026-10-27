@@ -186,3 +186,75 @@
 3. attic 全油门 151s/90 脱轨——若想全油门也可玩，需把最紧弯放宽到 r≥75（会进一步偏离参考图的紧凑 chicane）。
 4. `_debug/_ref/` 下本轮生成的参考图网格标注与 attic_points.json（可复用于后续调参）。
 5. `_debug/_mk-attic-track.js`（海龟原型）与 `_seg-audit.js`（junction 审计）保留可重跑。
+
+## 2026-10-27 第四轮：多赛道脱轨探针 + 阁楼赛道手感分析（当前状态）
+
+### 1. `_debug/_derail-probe.js` 泛化到多赛道
+- 改法：`runTrack(id)` 每条赛道独立 `createTrack(id)` + 独立 `setFlightHooks(fp.create())`（避免跨赛道残留 world）；护栏内壁不再硬编码 45，改成 `track.width/2 + 3`；`node _debug/_derail-probe.js [all|figure8|attic]`，未知 id 退出码 2，任一赛道有失败样本退出码 1。
+- 新增指标：`Δret = 归位目标 s − 脱轨 s`（归一到最短弧）与 `respawnMoved`，用于观察 `car.js` 的双向退出跳段；`>200px` 只打 `[跨段退出]` 软标记、不计失败。
+- 实测：figure8 20/20、attic 20/20 通过；两条赛道归位目标都不在桥下遮挡死角；`attic` 出现一次 `Δret=+36`（前向退出），在软标记阈内。
+
+### 2. 阁楼赛道：三条「甩不远」样本的根因（已定位，不是护栏 bug）
+- 现象：`attic` idx 9/10/11（脱轨 s≈2048/2052/2154）`maxLatOut` 只有 5.4–6.4px、`fwdMax` 14–16px，1.2s 就停住。
+- 逐帧追踪：起跳后 y 从 16.5 升到 ~26（apex），随即下落并停住；横向只走 5px。
+- 根因：这三处赛道从**斜坡承力板下方**穿过，头顶净空只有 **28.9–32.5px**；起跳竖直初速 `vy = 180 + 0.22v` 让车体顶部（y+6.5）撞上斜置承力板底面，接触法线因 `slopeAt` 倾斜而带水平分量，反复接触把水平速度吃掉 —— 属于几何限制（低净空下没有甩出空间），不是穿模，也不是护栏把车卡住。
+- 复核过的事实：那三处的墙段偏移都在 46.5（正常）；起跳点与墙体无 3D 重叠。
+
+### 3. `js/flight-physics.js`：起跳位姿自避让（安全网，当前不触发）
+- 新增 `wallBoxes`（`buildWallRing` 登记每段墙的定向盒参数）+ `spawnBlocked(x,y,z,yaw)`（车体近似成纵向 3 个半径 13 的圆，与膨胀后的墙盒做 3 轴重叠测试）+ `begin()` 里以 2px 步朝槽心收缩最多 26px。
+- **当前几何下永不触发**：起跳中心 y = elev+16.5、墙中心 y = elev+4.5，`|Δy| = 12 > halfH+6.5 = 10`（车体底面 10 高于墙顶 8，本来就悬在墙顶上方）。保留它是为了将来若把起跳抬升从 `+8` 调低、或换更紧的赛道时能自动避让。
+- 已验证：`node --check js/flight-physics.js` 通过；开启前后 `_derail-probe` 的两条赛道数字完全一致（说明行为未变）。
+
+### 4. 阁楼赛道几何隐患（需要人眼确认）
+- `attic` 有 5.4% 弧长的曲率半径 **< 46.5px**（最紧 R≈37–44，位于 s≈2534–2590、2674 一带；另有若干 junction 附近的采样尖刺）。
+- 把中心线按 46.5 偏移生成护栏时，**R < 46.5 处内法线偏移会折叠**（实测扫描到 98 个反向点，分布在 s≈588/814/1112/1248–1278/2022–2194/2272/2332–2336/2426–2590/2672–2732 等短区段）——即视觉护栏在发夹弯内侧会「掐进路面」。
+- 物理侧影响有限（`_derail-probe` 20/20 通过，脱轨不会穿模），但**视觉上可能出现护栏穿过路面的怪异形状**，需在浏览器里看一下 s≈1250–1290 与 2500–2740 两个区段。
+- 若要修：`buildWallRing`（物理）与 `gl.js` 的 `buildWalls`（视觉）都可对「R ≤ 偏移量」的内侧段跳过或把偏移压到 `0.8R`，但会改变发夹弯的护栏外观与脱轨落点，属于设计决策，未实施。
+
+### 验证状态
+- ✅ `node -e "require('./test/race.test.js')"` 6/6 通过（`node --test` 在本沙箱 spawn EPERM）。
+- ✅ `node _debug/_derail-probe.js` figure8 20/20、attic 20/20；`node _debug/_derail-probe.js nosuch` → 退出码 2。
+- ✅ `node _debug/_flight-probe.js` 6 场景不穿桥面（s=1256 那条「穿模」仍是既有误报：车 y=7.5 在地面层合法从桥下穿过）。
+- ⚠️ 浏览器实机仍未验证（本沙箱无法派生无头浏览器）：赛道切换交互、attic 3D 观感、发夹弯护栏是否掐进路面。
+
+### 剩余待办
+1. 人眼检查 attic 发夹弯护栏（s≈1250–1290、2500–2740）是否折叠穿路；决定是否按曲率跳过内侧墙段（物理+视觉同改）。
+2. 若想让「桥下低净空处」的脱轨也有甩出手感，可在 `begin()` 里按头顶承力板净空动态压低 `vy`（例如净空 < 40px 时用 `vy = 90 + 0.1v`），需另做观感标定。
+3. `_debug/` 目录已很大，确认稳定后清理（删除前需人工确认）。
+
+## 2026-10-27 第五轮：修「侧边栏里切赛道无效」
+
+- 现象：在 DSH Web GUI 侧边栏（iframe/面板）里打开 `index.html`，标题界面按 ←/→ 无法切换赛道。
+- 分析：`_debug/_boot-sim.js` 的 `runFrames()` 有 bug——函数开头把待执行回调 `slice()` 到局部变量又丢弃，`pressKey()` 之后实际一帧都没跑，所以模拟日志里 `store` 永远是 `{}`，看起来像“切换无效”（**假阴性**，掩盖了真实问题）。真机上的主因更可能是宿主 iframe/面板吞掉或拦走方向键。
+- 改动：
+  1. `js/render.js`：标题选择器的 `◀` / `▶` 拆成独立绘制，并记录 56×48 的逻辑坐标命中框，新增导出 `hitTestTitleArrow(x, y)`。
+  2. `js/main.js`：新增 `toLogical(e)`（用 `hudCanvas.getBoundingClientRect()` 把 client 坐标换算到 1280×720）与 `onPointerDown(e)`——标题阶段点中左右箭头即切换赛道，同时 `focus()` 画布；两个画布都加了 `tabindex="0"`；`pointerdown` 监听挂在 `#game` 与 `#hud` 上。
+  3. `js/input.js`：`KeyA` / `KeyD` 也发 `left` / `right` 边沿（方向键被吞时的键盘备用键）。
+  4. `_debug/_boot-sim.js`：修好 `runFrames()`；画布桩补 `getBoundingClientRect` / `addEventListener` / `focus`；新增流程 0（点击右箭头 → 断言 `localStorage['slotrace.track'] === 'attic'`）与键盘流程断言。
+  5. `index.html`：脚本版本参数 `?v=2` → `?v=3`，避免旧缓存掩盖新代码。
+- 验证：`node _debug/_boot-sim.js` exit 0（`[click] 右箭头 → attic`、`[key] ArrowRight ×2 → attic`）；`node -e "require('./test/race.test.js')"` 6/6；`node _debug/_derail-probe.js` 两条赛道 20/20 不变。
+- 待人工确认：在侧边栏里点标题上的 ▶ 能否切到「阁楼复刻」（本沙箱无法起浏览器）。
+
+## 2026-10-27 第六轮：侧边栏切赛道「诊断化」
+
+- **外部证据**：用户确认「按 Enter 能开赛，但 ←/→ 与鼠标都没法切赛道」。Enter 有效 ⇒ keydown 与主循环正常、`phase==='title'` 成立 ⇒ 问题不可能是「iframe 完全没拿到事件」。
+- **高级模型（Oracle）分析与我的独立核实一致**，给出按可能性排序的假设；两条输入通路（键盘 consume、鼠标 pointerdown）**都要经过 `switchTrack()` 的第一行守卫 `if (!window.RaceTrack || trackList.length < 2) return;`**，所以「两条都静默失效」最可能是 `trackList` 里只有 1 条 / 没有 `listTracks`（= 加载到了旧缓存脚本，或 index.html 自身被缓存导致引用旧 URL）。
+- **同时发现一个真实缺陷（H2）**：`switchTrack` 原来先 `trackId = 新id`，再 `try { track = createTrack(trackId) } catch { return; }`。若 `createTrack` 抛错，`trackId` 已是新赛道而 `track` 仍是旧赛道，标题读取的是 `track.name` ⇒ 永远显示旧名字，看起来像「按了没反应」，且状态被污染。
+
+### 改动
+1. `js/main.js` `switchTrack()`：改为**先建后提交**——`createTrack(nextId)` 成功（且非空）后才写 `trackId` / `track` / `localStorage`；`scene.build`、`gl.setTrack` 的异常不再静默吞掉，写进 `window.__DBG__.err`。
+2. `js/main.js`：`__DBG__` 统计 `calls / lastDir / guarded / err`；新增 `updateDbg()`（每 6 帧采样，`paused` 分支也写），把 `BUILD5 list=… phase=… id=… name=…` / `calls=… guard=…` / `key=… pt=…` / `err=… errors=…` 写进 `#dbg`。
+3. `js/main.js` `drawHUD`：标题界面右下角固定画一行 11px 小字 `build 5 · N tracks`（**无需任何 URL 参数就能判断跑的是不是新代码，以及 trackList 有几条**）。
+4. `index.html`：`Cache-Control/Pragma: no-cache` meta；`<div id="dbg">` + 诊断探针脚本（捕获阶段记录 keydown/pointerdown、`error`/`unhandledrejection`，`?debug=1` 才显示）；脚本版本 `?v=4` → `?v=5`。
+5. `_debug/_boot-sim.js`：新增流程 0d——把 `createTrack('attic')` 打桩成抛 `boom`，断言 ① localStorage 未被污染 ② `__DBG__.err` 含 boom ③ 恢复后能正常切换。（并做过变异测试：把 `switchTrack` 改回旧写法，该用例确实 exit 1。）
+
+### 判定指引（用户侧，不需要 devtools）
+- 右下角**没有** `build 5 · N tracks` ⇒ 侧边栏仍是旧缓存（要重开侧边栏而不是普通刷新）。
+- 有该小字且 `N=1` ⇒ `trackList` 只有一条，脚本版本/顺序问题。
+- 有该小字且 `N=2`，但切换仍无效 ⇒ 在 URL 后加 `?debug=1`，看左下角 `calls` 是否增长、`guard` 是否非空、`err` 内容。
+- 名称变了但背景没变 ⇒ `scene.build` / `gl.setTrack` 抛错，看 `err`。
+
+### 验证
+- `node _debug/_boot-sim.js` exit 0（`[click] / [row-click] / [keyD] / [key] / [guard]` 五条全过）
+- `node -e "require('./test/race.test.js')"` 6/6；`node _debug/_derail-probe.js` figure8 20/20、attic 20/20
+- 仍未做：真实浏览器里点一次（本沙箱起不了浏览器）。

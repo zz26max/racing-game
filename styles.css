@@ -1,3 +1,18 @@
+/* 跨文档 View Transitions：从 zz26max.github.io 主站（zz-works）跳进来时整页淡换。
+   跨文档过渡要求两侧文档都声明 —— 主站与另外两个小玩意仓库也带同一条。
+   不支持的浏览器自动回落成普通跳转。 */
+@view-transition {
+  navigation: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-image-pair(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
 html,
 body {
   width: 100%;

@@ -47,6 +47,7 @@
     var staticsBuilt = false;
     var staticsTrack = null;   // 静态体所属赛道（切赛道时重建）
     var staticBodies = [];     // 已加入 world 的静态体清单
+    var wallBoxes = [];        // 护栏段定向盒参数（只给 begin 的起跳位姿自避让用，随 buildStatics 重建）
 
     // 已落地计时与飞行累计时间
     var startTime = 0;
@@ -123,11 +124,53 @@
           body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw);
           world.addBody(body);
           staticBodies.push(body);
+          // 登记该段的定向盒参数供起跳位姿自避让（只读快照，不参与碰撞求解）：
+          // 绕 Y 转 yaw 把局部 +X 转到 (cos yaw, 0, -sin yaw)，即 u 轴；厚度沿局部 +Z。
+          wallBoxes.push({
+            x: body.position.x,
+            z: body.position.z,
+            y: cy,
+            ux: Math.cos(yaw),
+            uz: -Math.sin(yaw),
+            halfLen: step / 2,
+            halfT: halfT,
+            halfH: halfH
+          });
         }
       }
     }
 
+    // 起跳位姿是否与任何护栏段重叠。车体 Box 是 44×13×13，这里近似成沿车身纵向的
+    // 3 个半径 13 的圆（车心、车头前 16、车尾后 16），逐个与登记的定向盒做
+    // “点 vs 膨胀盒”测试：把点变到墙盒局部坐标系后，三轴半宽各加车体对应的半尺寸。
+    // 只做判断、不加任何静态体，墙体几何与视觉完全不变。
+    function spawnBlocked(x, y, z, yaw) {
+      var n = wallBoxes.length;
+      if (!n) return false;
+      var R = 13;        // 取样圆半径（车体半宽）
+      var GAP = 16;      // 车头/车尾取样点距车心的纵向距离
+      var HH = 6.5;      // 车体半高
+      var fx = Math.cos(yaw), fz = -Math.sin(yaw);   // 车身前向单位向量（与墙盒 u 轴同约定）
+      for (var k = -1; k <= 1; k++) {
+        var px = x + fx * GAP * k;
+        var pz = z + fz * GAP * k;
+        for (var i = 0; i < n; i++) {
+          var b = wallBoxes[i];
+          var dx = px - b.x, dz = pz - b.z;
+          if (dx * dx + dz * dz > 3600) continue;          // 60px 距离粗筛
+          if (Math.abs(y - b.y) >= b.halfH + HH) continue; // 竖直不重叠
+          var lu = dx * b.ux + dz * b.uz;
+          if (lu <= -(b.halfLen + R) || lu >= b.halfLen + R) continue;
+          var lv = -dx * b.uz + dz * b.ux;
+          if (lv <= -(b.halfT + R) || lv >= b.halfT + R) continue;
+          return true;
+        }
+      }
+      return false;
+    }
+
     function buildStatics(track) {
+      wallBoxes.length = 0;   // 与静态体一同重建，避免切赛道后残留旧墙盒
       if (!track || typeof track.sampleAt !== 'function') return;
       var halfW = (Number(track.width) || 84) / 2;
       buildDeck(track, halfW);
@@ -280,30 +323,50 @@
         if (isFinite(e)) elev = e;
       }
 
+      // 起跳高度：全文件只在这里定义一次，车体创建与起跳位姿自避让共用同一份取值。
+      var startY = 1 + elev + 7.5 + 8;
+
+      // 初始朝向的偏航分量：切线 yaw 上叠加侧滑角，侧滑角与渲染层同一公式
+      // （slideYaw = -side × min(0.5, slip × 0.8)，slip 取 car.slip）。
+      // 这里提前算好，是因为起跳位姿自避让需要最终的车身朝向。
+      var baseYaw = Math.atan2(-ty, tx);
+      var slipVal = Number(car.slip) || 0;
+      if (!isFinite(slipVal)) slipVal = 0;
+      var slideYaw = -side * Math.min(0.5, slipVal * 0.8);
+      var spawnYaw = baseYaw + slideYaw;
+
+      // 起跳位姿自避让：极紧弯内侧的护栏段会折进路面，起跳点可能落在墙体内部。
+      // 以 2px 步朝槽心收缩横向坐标，最多 26px，直到车体与任何护栏段不重叠。
+      var shrink = 0;
+      while (shrink < 26 && spawnBlocked(startX, startY, startZ, spawnYaw)) {
+        shrink += 2;
+        var toward = (startLat > laneLat) ? -1 : (startLat < laneLat ? 1 : 0);
+        if (toward === 0) break;
+        startLat += toward * 2;
+        latDelta = startLat - laneLat;
+        startX = p.x - ty * latDelta;
+        startZ = p.y + tx * latDelta;
+      }
+
       // 车体：Box 半尺寸 (22,6.5,13)，质量 1，中心悬于路面之上
       var shape = new CANNON.Box(new CANNON.Vec3(22, 6.5, 13));
       carBody = new CANNON.Body({ mass: 1 });
       carBody.addShape(shape);
       carBody.material = carMaterial;
-      // 初始高度：路面上方 7.5（车体中心离地）+ 地面 1，再加赛道自身高度，
+      // 初始高度 startY：路面上方 7.5（车体中心离地）+ 地面 1，再加赛道自身高度，
       // 使在桥面/坡道上甩出时第一帧不往下掉、也不与承力板初始穿插。
       // 末尾 +8 的来历：物理护栏高 7（WALL_HEIGHT），车体半高 6.5。原来只抬 2 时车体
       // 竖直范围是路面上 3~16，与护栏（0~7）竖直重叠，外槽脱轨一开始就紧贴护栏内壁，
       // 横向速度被护栏侧面接触立刻吃掉——实测外槽脱轨横向只飞 1.6~24px，看起来只是
       // “撞一下护栏又回槽”。抬到 8 后车体底部在路面上 9，高于护栏顶 7，横向甩出不会再
       // 被护栏侧面挡死，而是从矮护栏上方甩到路肩外。
-      carBody.position.set(startX, 1 + elev + 7.5 + 8, startZ);
+      carBody.position.set(startX, startY, startZ);
       carBody.velocity.set(vx, vy, vz);
 
-      // 初始朝向：切线 yaw 上叠加侧滑角，侧滑角与渲染层同一公式
-      // （slideYaw = -side × min(0.5, slip × 0.8)，slip 取 car.slip）；
-      // 若 track.slopeAt 存在，再绕车身 Z 轴（横向轴）按坡度叠加俯仰
-      var baseYaw = Math.atan2(-ty, tx);
-      var slipVal = Number(car.slip) || 0;
-      if (!isFinite(slipVal)) slipVal = 0;
-      var slideYaw = -side * Math.min(0.5, slipVal * 0.8);
+      // 初始朝向：偏航用上面算好的 spawnYaw；若 track.slopeAt 存在，
+      // 再绕车身 Z 轴（横向轴）按坡度叠加俯仰
       var qYaw = new CANNON.Quaternion();
-      qYaw.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), baseYaw + slideYaw);
+      qYaw.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), spawnYaw);
       var qPitch = null;
       if (track && typeof track.slopeAt === 'function') {
         var slopeRoot = Number(track.slopeAt(s));

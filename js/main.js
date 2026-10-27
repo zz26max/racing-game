@@ -76,6 +76,9 @@
 
   // 各模块降级初始化：缺哪个都不阻塞其余部分
   function init() {
+    // 画布可聚焦：键盘事件落在宿主 iframe 内时也能收到（点击画布时 onPointerDown 会主动 focus）
+    if (canvas && canvas.setAttribute) canvas.setAttribute('tabindex', '0');
+    if (hudCanvas && hudCanvas.setAttribute) hudCanvas.setAttribute('tabindex', '0');
     if (window.RaceTrack && typeof window.RaceTrack.listTracks === 'function') {
       trackList = window.RaceTrack.listTracks();
       var saved = readTrackId();
@@ -115,24 +118,69 @@
   }
 
   // 标题界面切换赛道：重建赛道、2D 底图与 3D 场景（车模/灯光保留）
+  // 先建后提交：createTrack 失败时 trackId/track/localStorage 一个都不动。
+  // 旧写法先写 trackId 再连，抛错后会出现「trackId 已是新赛道、track 还是旧的」半更新，
+  // 标题便永久显示旧赛道名——所以改成建成功才提交状态。
   function switchTrack(dir) {
-    if (!window.RaceTrack || trackList.length < 2) return;
+    var DBG = window.__DBG__ || (window.__DBG__ = {});
+    DBG.calls = (DBG.calls || 0) + 1;
+    DBG.lastDir = dir;
+    if (!window.RaceTrack || trackList.length < 2) { DBG.guarded = 'no-tracklist:' + trackList.length; return; }
+    DBG.guarded = '';
     var idx = 0;
     for (var i = 0; i < trackList.length; i++) {
       if (trackList[i].id === trackId) { idx = i; break; }
     }
     idx = (idx + dir + trackList.length) % trackList.length;
-    trackId = trackList[idx].id;
+    var nextId = trackList[idx].id;
+    var nextTrack = null;
+    try { nextTrack = window.RaceTrack.createTrack(nextId); } catch (err) { DBG.err = 'createTrack(' + nextId + '): ' + (err && err.message); return; }
+    if (!nextTrack) { DBG.err = 'createTrack(' + nextId + '): 返回空'; return; }
+    // 创建成功后才提交状态
+    trackId = nextId;
+    track = nextTrack;
     try { window.localStorage.setItem(TRACK_KEY, trackId); } catch (err) { /* 隐私模式静默 */ }
-    try { track = window.RaceTrack.createTrack(trackId); } catch (err) { return; }
     try {
       var built = window.RaceScene && window.RaceScene.build ? window.RaceScene.build(track) : null;
       scene = built && built.canvas ? built.canvas : null;
-    } catch (err2) { scene = null; }
+    } catch (err2) { scene = null; DBG.err = 'scene.build: ' + (err2 && err2.message); }
     if (gl && typeof gl.setTrack === 'function') {
-      try { gl.setTrack(track); } catch (err3) { gl = null; }   // 3D 重建失败整体回落 2D
+      try { gl.setTrack(track); } catch (err3) { gl = null; DBG.err = 'gl.setTrack: ' + (err3 && err3.message); }   // 3D 重建失败整体回落 2D
     }
     if (audio && typeof audio.resume === 'function') audio.resume();
+  }
+
+  // 指针事件坐标 → 1280×720 逻辑坐标（画布 CSS 尺寸等比缩放到逻辑分辨率）
+  function toLogical(e) {
+    var cx = e && isFinite(e.clientX) ? Number(e.clientX) : 0;
+    var cy = e && isFinite(e.clientY) ? Number(e.clientY) : 0;
+    var rect = null;
+    try {
+      rect = (hudCanvas && hudCanvas.getBoundingClientRect) ? hudCanvas.getBoundingClientRect() : null;
+    } catch (err) { rect = null; }
+    var w = rect && rect.width ? rect.width : 1;    // 宽高为 0 时回退 1，避免除零
+    var h = rect && rect.height ? rect.height : 1;
+    var left = rect && isFinite(rect.left) ? Number(rect.left) : 0;
+    var top = rect && isFinite(rect.top) ? Number(rect.top) : 0;
+    return { x: (cx - left) * W / w, y: (cy - top) * H / h };
+  }
+
+  // 页面按下（window 捕获阶段）：聚焦画布 + 标题界面切赛道
+  // 命中顺序：先箭头精确框，再整行半平面回退（箭头框外、整行的左/右半边也能切）
+  function onPointerDown(e) {
+    if (e && e.isPrimary === false) return;   // 多点触控只认主触点，忽略次要触点
+    try { if (hudCanvas && hudCanvas.focus) hudCanvas.focus(); } catch (err) { /* 忽略 */ }
+    if (phase !== 'title') return;
+    var R = window.RaceRender;
+    if (!R) return;
+    var p = toLogical(e);
+    var hit = null;
+    try { hit = typeof R.hitTestTitleArrow === 'function' ? R.hitTestTitleArrow(p.x, p.y) : null; } catch (err2) { hit = null; }
+    if (!hit && typeof R.hitTestTitleRow === 'function') {
+      try { hit = R.hitTestTitleRow(p.x, p.y); } catch (err3) { hit = null; }
+    }
+    if (hit === 'left') switchTrack(-1);
+    else if (hit === 'right') switchTrack(1);
   }
 
   // Enter 开始 / R 重开 / P 暂停 / M 静音 / Esc 回标题
@@ -240,6 +288,30 @@
     return done;
   }
 
+  // 诊断面板：把「切赛道为什么没反应」需要的状态摊平成 4 行文本写进 #dbg（?debug=1 才可见）
+  // 采样：每 6 帧写一次 textContent（12px 文本重写 DOM 有成本，采样后肉眼仍算实时）
+  // 缺 #dbg / 缺 __DBG__ 时静默跳过，不影响游戏本身
+  var dbgFrame = 0;
+  function updateDbg() {
+    if ((dbgFrame++ % 6) !== 0) return;
+    var D = window.__DBG__;
+    if (!D) return;
+    var el = null;
+    try { el = document.getElementById('dbg'); } catch (err) { el = null; }
+    if (!el) return;
+    var name = track && track.name ? String(track.name) : '-';
+    var keys = D.keys && D.keys.length ? D.keys.slice(-3).join(',') : '-';
+    var pt = (D.pt && isFinite(D.pt.x) && isFinite(D.pt.y))
+      ? (Math.round(D.pt.x) + ',' + Math.round(D.pt.y)) : '-';
+    var errCount = window.__ERRORS__ && window.__ERRORS__.length ? window.__ERRORS__.length : 0;
+    el.textContent =
+      'BUILD5 list=' + trackList.length + ' phase=' + phase + ' id=' + trackId + ' name=' + name + '\n' +
+      'calls=' + (D.calls || 0) + ' dir=' + (D.lastDir === undefined || D.lastDir === null ? '-' : D.lastDir) +
+        ' guard=' + (D.guarded || '-') + '\n' +
+      'key=' + keys + ' pt=' + pt + '\n' +
+      'err=' + (D.err || '-') + ' errors=' + errCount;
+  }
+
   // 帧入口：计时、输入、按阶段推进
   function tick(now) {
     var dt = (now - last) / 1000;
@@ -247,10 +319,11 @@
     if (!(dt > 0)) dt = 0;
     if (dt > 0.05) dt = 0.05;
     handleInput();
-    if (phase === 'paused') { acc = 0; return; }
+    if (phase === 'paused') { acc = 0; updateDbg(); return; }
     time += dt;
     if (phase === 'countdown' || phase === 'running') step(dt);
     engineSounds();
+    updateDbg();
   }
 
   // 逻辑坐标 → 设备像素；16:9 内接 CSS 尺寸，#game 与 #hud 同步（居中交给 CSS 的 fixed + translate）
@@ -311,6 +384,14 @@
     if (!window.RaceRender) return;
     if (state.phase === 'title') {
       if (typeof window.RaceRender.drawTitle === 'function') window.RaceRender.drawTitle(hudCtx, state);
+      // 标题右下角的构建标记：截图里一眼确认加载到的是哪个版本、赛道加载到几条（不需要 ?debug=1）
+      hudCtx.save();
+      hudCtx.font = '11px monospace';
+      hudCtx.textAlign = 'right';
+      hudCtx.textBaseline = 'bottom';
+      hudCtx.fillStyle = 'rgba(233,220,196,.45)';
+      hudCtx.fillText('build 5 · ' + trackList.length + ' tracks', W - 8, H - 6);
+      hudCtx.restore();
     } else if (typeof window.RaceRender.drawHUD === 'function') {
       window.RaceRender.drawHUD(hudCtx, state);
     }
@@ -414,6 +495,10 @@
   window.addEventListener('pointerdown', function () { try { window.focus(); } catch (err) { /* 忽略 */ } }, false);
   window.addEventListener('pointerdown', warmAudio, false);
   window.addEventListener('resize', resize, false);
+
+  // 指针：挂在 window 捕获阶段，避免被画布/叠加层吃掉（#hud 是 pointer-events:none，
+  // 真实点击会穿到下层，单挂某个画布不可靠）；一次点击只进一次，无需防抖。
+  window.addEventListener('pointerdown', onPointerDown, true);
 
   init();
   resize();

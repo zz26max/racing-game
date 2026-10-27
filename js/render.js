@@ -44,6 +44,13 @@
   var COUNTDOWN_GO = 0.8;   // 倒计时最后 0.8 秒显示 GO!
   var DEFAULT_LAPS = 3;     // 未取到 race.laps 时的圈数
 
+  // 标题选择器两侧箭头的点击命中矩形（逻辑坐标，drawTitle 每帧记录）
+  var titleArrowHits = { left: null, right: null };
+  // 标题选择器整行的命中区（逻辑坐标，drawTitle 每帧记录；未绘制过为 null）
+  var titleRowHit = null;
+  var TITLE_ROW_HALF_H = 44;   // 选择器基线上下各 44px 内算命中整行
+  var TITLE_ROW_PAD_X = 60;    // 名称左右边缘各外扩 60px（再放宽到纸卡横向范围，见 drawTitle）
+
   var COL = {
     ink: '#2B2320',
     seat: '#3A4A57',
@@ -549,10 +556,50 @@
     ctx.restore();
   }
 
+  // 粗估文本宽度：measureText 不可用时按每字 1em 估（CJK 全角近似）
+  function textWidth(ctx, text, em) {
+    text = String(text === null || text === undefined ? '' : text);
+    if (!text) return 0;
+    var m = null;
+    try { m = ctx.measureText ? ctx.measureText(text) : null; } catch (err) { m = null; }
+    if (m && isFinite(m.width) && m.width > 0) return m.width;
+    return text.length * em;
+  }
+
+  // 记录单个箭头的命中矩形：宽 96、高 64，以箭头中心为基准，垂直中心对齐选择器基线
+  function setArrowHit(side, cx, cy) {
+    titleArrowHits[side] = { x: cx - 48, y: cy - 32, w: 96, h: 64 };
+  }
+
+  // 标题界面箭头命中测试：命中返回 'left' / 'right'，否则 null（逻辑坐标）
+  function hitTestTitleArrow(x, y) {
+    var px = Number(x), py = Number(y);
+    if (!isFinite(px) || !isFinite(py)) return null;
+    var l = titleArrowHits.left, r = titleArrowHits.right;
+    if (l && px >= l.x && px <= l.x + l.w && py >= l.y && py <= l.y + l.h) return 'left';
+    if (r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return 'right';
+    return null;
+  }
+
+  // 标题界面整行命中测试：落在选择器那一行（基线上下 44px）就按名称中心分左右半平面，
+  // 命中返回 'left' / 'right'，否则 null；未绘制过标题或只有一条赛道时返回 null
+  function hitTestTitleRow(x, y) {
+    var px = Number(x), py = Number(y);
+    if (!isFinite(px) || !isFinite(py)) return null;
+    var row = titleRowHit;
+    if (!row || row.trackCount < 2) return null;
+    if (py < row.baseY - TITLE_ROW_HALF_H || py > row.baseY + TITLE_ROW_HALF_H) return null;
+    if (px < row.minX || px > row.maxX) return null;
+    return px < row.nameCx ? 'left' : 'right';
+  }
+
   // 标题界面：压暗底图 + 标题 / 副标题 / 操作提示 / 呼吸闪烁的开始提示
   function drawTitle(ctx, s) {
     if (!ctx || !s) return;
     var t = Number(s.time) || 0;
+    titleArrowHits.left = null;
+    titleArrowHits.right = null;
+    titleRowHit = null;
 
     ctx.save();
     ctx.fillStyle = DIM_TITLE;
@@ -581,12 +628,34 @@
     ctx.fillStyle = 'rgba(43,35,32,.75)';
     ctx.fillText('《双人成行》阁楼小游戏 · 程序化复刻', W / 2, 330);
 
-    // 赛道选择器：◀ 名称 ▶（左右方向键切换，localStorage 记忆）
+    // 赛道选择器：◀  名称  ▶（方向键 / A·D / 点击箭头切换，localStorage 记忆）
     var trackCount = Number(s.trackCount) || 0;
     if (trackCount > 1) {
       setFont(ctx, 'bold', 20);
       ctx.fillStyle = COL.ink;
-      ctx.fillText('◀　' + (s.trackName || '') + '　▶', W / 2, 368);
+      var name = String(s.trackName || '');
+      var arrowLW = textWidth(ctx, '◀', 20);
+      var arrowRW = textWidth(ctx, '▶', 20);
+      var nameW = textWidth(ctx, name, 20);
+      var gap = 28;                                  // 箭头与名称的间距
+      var baseY = 368;
+      var startX = W / 2 - (arrowLW + gap + nameW + gap + arrowRW) / 2;
+      var leftCx = startX + arrowLW / 2;
+      var nameCx = startX + arrowLW + gap + nameW / 2;
+      var rightCx = startX + arrowLW + gap + nameW + gap + arrowRW / 2;
+      ctx.fillText('◀', leftCx, baseY);
+      ctx.fillText(name, nameCx, baseY);
+      ctx.fillText('▶', rightCx, baseY);
+      setArrowHit('left', leftCx, baseY);
+      setArrowHit('right', rightCx, baseY);
+      // 整行命中：名称左右边缘各外扩 60px，并放宽到纸卡横向范围（侧边栏缩放后整行都好点）
+      titleRowHit = {
+        baseY: baseY,
+        nameCx: nameCx,
+        minX: Math.min(nameCx - nameW / 2 - TITLE_ROW_PAD_X, cardX),
+        maxX: Math.max(nameCx + nameW / 2 + TITLE_ROW_PAD_X, cardX + cardW),
+        trackCount: trackCount
+      };
       setFont(ctx, 'normal', 13);
       ctx.fillStyle = 'rgba(43,35,32,.6)';
       ctx.fillText(s.trackDesc || '', W / 2, 392);
@@ -595,7 +664,7 @@
     setFont(ctx, 'normal', 17);
     ctx.fillStyle = COL.ink;
     ctx.fillText('P1：W 或空格 油门　　P2：↑ / Enter / 右 Shift 油门', W / 2, 420);
-    ctx.fillText((trackCount > 1 ? '←/→ 切赛道　' : '') + 'P 暂停　M 静音　R 重开', W / 2, 446);
+    ctx.fillText((trackCount > 1 ? '←/→ 或 A/D 或点击箭头切赛道　' : '') + 'P 暂停　M 静音　R 重开', W / 2, 446);
 
     // 1Hz 呼吸闪烁（0.45~1，纸卡上不用金色）
     setFont(ctx, 'bold', 22);
@@ -646,6 +715,8 @@
     drawCar: drawCar,
     drawHUD: drawHUD,
     drawTitle: drawTitle,
+    hitTestTitleArrow: hitTestTitleArrow,
+    hitTestTitleRow: hitTestTitleRow,
     emit: emit,
     updateParticles: updateParticles,
     width: W,

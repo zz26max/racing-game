@@ -2,6 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>赛车小游戏</title>
   <script>
@@ -14,23 +16,49 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="dbg" hidden style="position:fixed;left:0;bottom:0;z-index:99999;pointer-events:none;font:12px/1.35 monospace;background:#000c;color:#8f8;padding:4px 6px;white-space:pre"></div>
+  <script>
+    // 侧边栏诊断探针：?debug=1 才显示；window.__DBG__ 始终可用
+    (function () {
+      var D = window.__DBG__ = { build: 5, keys: [], pt: null, err: '' };
+      function show() {
+        if (!/(?:[?&])debug=1(?:&|$)/.test(window.location.search || '')) return;
+        var el = document.getElementById('dbg');
+        if (el) el.hidden = false;
+      }
+      window.addEventListener('keydown', function (e) {
+        D.keys.push(String(e.code || e.key || '?'));
+        if (D.keys.length > 12) D.keys.shift();
+      }, true);
+      window.addEventListener('pointerdown', function (e) {
+        D.pt = { x: e.clientX, y: e.clientY, primary: e.isPrimary !== false };
+      }, true);
+      window.addEventListener('error', function (e) {
+        D.err = String(e.message || e) + ' @' + String(e.filename || '') + ':' + String(e.lineno || 0);
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        D.err = 'promise: ' + String((e.reason && e.reason.message) || e.reason);
+      });
+      if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', show, false); else show();
+    })();
+  </script>
   <canvas id="game"></canvas>
   <canvas id="hud"></canvas>
   <pre id="selftest" hidden></pre>
 
   <script src="vendor/three.min.js"></script>
   <script src="vendor/cannon.min.js"></script>
-  <script src="js/util.js?v=2"></script>
-  <script src="js/track.js?v=2"></script>
-  <script src="js/car.js?v=2"></script>
-  <script src="js/race.js?v=2"></script>
-  <script src="js/scene.js?v=2"></script>
-  <script src="js/render.js?v=2"></script>
-  <script src="js/gl.js?v=2"></script>
-  <script src="js/gl-cars.js?v=2"></script>
-  <script src="js/flight-physics.js?v=2"></script>
-  <script src="js/input.js?v=2"></script>
-  <script src="js/audio.js?v=2"></script>
-  <script src="js/main.js?v=2"></script>
+  <script src="js/util.js?v=5"></script>
+  <script src="js/track.js?v=5"></script>
+  <script src="js/car.js?v=5"></script>
+  <script src="js/race.js?v=5"></script>
+  <script src="js/scene.js?v=5"></script>
+  <script src="js/render.js?v=5"></script>
+  <script src="js/gl.js?v=5"></script>
+  <script src="js/gl-cars.js?v=5"></script>
+  <script src="js/flight-physics.js?v=5"></script>
+  <script src="js/input.js?v=5"></script>
+  <script src="js/audio.js?v=5"></script>
+  <script src="js/main.js?v=5"></script>
 </body>
 </html>

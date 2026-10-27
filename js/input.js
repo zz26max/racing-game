@@ -64,8 +64,8 @@
         else if (code === 'KeyM') fire('mute');
         else if (code === 'Enter') fire('start');
         else if (code === 'Escape') fire('back');
-        else if (code === 'ArrowLeft') fire('left');
-        else if (code === 'ArrowRight') fire('right');
+        else if (code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyQ' || code === 'Comma') fire('left');
+        else if (code === 'ArrowRight' || code === 'KeyD' || code === 'KeyE' || code === 'Period') fire('right');
       }
       held[code] = true;
     }

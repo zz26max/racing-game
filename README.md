@@ -102,10 +102,11 @@ node --test test/race.test.js
 # 受限沙箱里不允许派生进程时用这条等价写法
 node -e "require('./test/race.test.js')"
 
-# 三个回归探针
-node _debug/_derail-probe.js     # 20 次真实脱轨：起跳不嵌护栏 / 甩出横向位移 / 回弹 / 单帧位移 / 归位目标是否在桥下死角
-node _debug/_flight-probe.js     # 6 种脱轨场景：不穿桥面、留在护栏走廊内、翻滚幅度
-node _debug/_occlusion-probe.js  # 固定机位下桥下段的遮挡区段
+# 四个回归探针
+node _debug/_derail-probe.js            # 两条赛道各 20 次真实脱轨：起跳不嵌护栏 / 甩出横向位移 / 回弹 / 单帧位移 / 归位目标是否在桥下死角 / 归位跳段
+node _debug/_derail-probe.js attic      # 只跑指定赛道（all | figure8 | attic；未知 id 退出码 2，有失败样本退出码 1）
+node _debug/_flight-probe.js            # 6 种脱轨场景：不穿桥面、留在护栏走廊内、翻滚幅度
+node _debug/_occlusion-probe.js         # 固定机位下桥下段的遮挡区段
 ```
 
 本机实测（2026-10-26）：
@@ -119,12 +120,12 @@ node _debug/_occlusion-probe.js  # 固定机位下桥下段的遮挡区段
 ✔ 赛道注册表：listTracks 返回双赛道，未知 id 回落 8 字环道
 tests 6 / pass 6 / fail 0
 
-_derail-probe：20 个有效样本 20/20 通过
-  起跳外沿最大 44.50px（护栏内壁 45）——不再嵌入护栏
-  甩出横向位移 41.5–80.7px——外槽与内槽脱轨都能越过矮护栏
-  飞行 0.79–1.55s，全程 1.54–2.30s
-  单帧最大位移 6.7px（无瞬移）；落地回弹 >3px 最多 1 次、最大 3.3px
-  20/20 归位目标都不在桥下遮挡死角
+_derail-probe（2026-10-27 多赛道版）：figure8 20/20、attic 20/20 通过
+  起跳外沿最大 44.50px（护栏内壁 45）——两条赛道都不再嵌入护栏
+  甩出横向位移：figure8 42.4–83.3px；attic 5.4–84.6px（attic 少数样本在桥下低净空处被斜坡承力板挡住，见 HANDOFF）
+  飞行 0.75–1.54s（figure8）/ 0.47–1.27s（attic），全程 1.50–2.29s / 1.22–2.02s
+  单帧最大位移 7.0px（figure8）/ 11.1px（attic，低于 14px 阈值）
+  20/20 归位目标都不在桥下遮挡死角；归位跳段 ≤ 36px（attic，双向退出）
 ```
 
 浏览器自检：打开 `index.html?selftest=1`，离屏跑 9000 步（75 秒，1/120 步长，油门 `[1, 0.8]`，默认 8 字赛道），校验完赛、冠军 3 个圈速、至少 1 次脱轨且无脚本错误；结果写入页面 `#selftest`、`window.__SELFTEST__` 与 `document.title`（`SELFTEST PASS` / `SELFTEST FAIL`）。最近一次本机结果：`SELFTEST PASS`，`bestLap≈16.1`、`derails≈12`。
@@ -139,6 +140,7 @@ _derail-probe：20 个有效样本 20/20 通过
 - 需要支持 WebGL 的浏览器，WebGL 不可用时回落 2D。
 - 3D 脱轨观感（甩出轨迹、越护栏、落地滑行、归位可见性）目前由 `_debug/_derail-probe.js` 做量化验证，浏览器实机连拍仍需人工确认。
 - 无 WebGL 时的 2D 兜底路径仍走 `js/car.js` 里的旧抛体参数，观感与 3D 飞行不一致。
+- 阁楼赛道 s≈2040–2160 段从斜坡承力板下方穿过（净空约 29px），在那里脱轨时车会撞到头顶斜板、甩不远；这是几何限制而非穿模。
 
 ## 版权
 
