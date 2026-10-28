@@ -9,9 +9,11 @@
   'use strict';
   var api = {};
 
-  var ENGINE_GAIN = 0.03;   // 引擎增益（固定）
-  var ENGINE_BASE = 55;     // 引擎基频 55Hz
-  var ENGINE_SPAN = 220;    // 随速度增加的频率跨度
+  var ENGINE_GAIN = 0.05;   // 引擎增益（固定）
+  var ENGINE_BASE = 62;     // 引擎基频
+  var ENGINE_SPAN = 240;    // 随速度增加的频率跨度
+  var ENGINE_DETUNE = 1.007; // 第二锯齿的失谐比（≈12Hz 拍频，加厚）
+  var SCREECH_GAIN = 0.14;  // 轮胎摩擦声峰值增益
 
   function getWin() {
     if (typeof window !== 'undefined') return window;
@@ -129,33 +131,68 @@
       } catch (err) { /* 静默失败 */ }
     }
 
-    // 每个玩家一条 sawtooth + lowpass 引擎音，外加一条 square 谐波作"打滑预警"层：
-    // 平时增益 0，gripUse 逼近极限时按 warn01 抬起来——引擎声发尖 = 该松油了
+    // 每个玩家一组引擎声 + 一组轮胎摩擦声（全程常驻，增益归零待命）：
+    //  - 引擎：双锯齿微失谐（拍频加厚）→ lowpass 随速度开合；24Hz LFO 对增益做浅调幅（怠速颤感）
+    //  - 摩擦：循环白噪声 → 高Q带通（中心频率随 warn 抬升 + 7.5Hz LFO 抖动）→ 增益随 warn
+    //    —— 赛车游戏"逼近极限"的通用配方是轮胎摩擦声，不是报警器音
     function ensureEngine(i) {
       if (engines[i]) return engines[i];
       try {
-        var osc = ctx.createOscillator();
-        osc.type = 'sawtooth';
-        osc.frequency.value = ENGINE_BASE;
+        var sawA = ctx.createOscillator();
+        sawA.type = 'sawtooth';
+        sawA.frequency.value = ENGINE_BASE;
+        var sawB = ctx.createOscillator();
+        sawB.type = 'sawtooth';
+        sawB.frequency.value = ENGINE_BASE * ENGINE_DETUNE;
         var filter = ctx.createBiquadFilter();
         filter.type = 'lowpass';
-        filter.frequency.value = 320;
-        filter.Q.value = 1;
+        filter.frequency.value = 380;
+        filter.Q.value = 2.2;
         var gain = ctx.createGain();
         gain.gain.value = 0;
-        osc.connect(filter);
+        sawA.connect(filter);
+        sawB.connect(filter);
         filter.connect(gain);
         gain.connect(master);
-        osc.start();
-        var warnOsc = ctx.createOscillator();
-        warnOsc.type = 'square';
-        warnOsc.frequency.value = ENGINE_BASE * 2.01;
-        var warnGain = ctx.createGain();
-        warnGain.gain.value = 0;
-        warnOsc.connect(warnGain);
-        warnGain.connect(master);
-        warnOsc.start();
-        engines[i] = { osc: osc, filter: filter, gain: gain, warnOsc: warnOsc, warnGain: warnGain };
+        sawA.start();
+        sawB.start();
+
+        var lfo = ctx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 24;
+        var lfoDepth = ctx.createGain();
+        lfoDepth.gain.value = 0;        // 随引擎增益一起开合
+        lfo.connect(lfoDepth);
+        lfoDepth.connect(gain.gain);    // 对增益做浅调幅（AudioParam 叠加）
+        lfo.start();
+
+        var noiseSrc = ctx.createBufferSource();
+        noiseSrc.buffer = noise();
+        noiseSrc.loop = true;
+        var bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 1800;
+        bp.Q.value = 4.2;
+        var bpLfo = ctx.createOscillator();
+        bpLfo.type = 'sine';
+        bpLfo.frequency.value = 7.5;
+        var bpLfoDepth = ctx.createGain();
+        bpLfoDepth.gain.value = 0;
+        bpLfo.connect(bpLfoDepth);
+        bpLfoDepth.connect(bp.frequency);
+        bpLfo.start();
+        var screechGain = ctx.createGain();
+        screechGain.gain.value = 0;
+        noiseSrc.connect(bp);
+        bp.connect(screechGain);
+        screechGain.connect(master);
+        noiseSrc.start();
+
+        engines[i] = {
+          sawA: sawA, sawB: sawB, filter: filter, gain: gain,
+          lfoDepth: lfoDepth,
+          bp: bp, bpLfoDepth: bpLfoDepth, screechGain: screechGain
+        };
         return engines[i];
       } catch (err) {
         return null;
@@ -172,8 +209,11 @@
           try {
             var t = ctx.currentTime;
             for (var k in engines) {
-              engines[k].gain.gain.setTargetAtTime(muted ? 0 : ENGINE_GAIN, t, 0.05);
-              engines[k].warnGain.gain.setTargetAtTime(0, t, 0.05);
+              var e = engines[k];
+              e.gain.gain.setTargetAtTime(muted ? 0 : ENGINE_GAIN, t, 0.05);
+              e.lfoDepth.gain.setTargetAtTime(muted ? 0 : 0.014, t, 0.05);
+              e.screechGain.gain.setTargetAtTime(0, t, 0.05);
+              e.bpLfoDepth.gain.setTargetAtTime(0, t, 0.05);
             }
           } catch (err) { /* 静默失败 */ }
         }
@@ -183,7 +223,7 @@
       isMuted: function () { return muted; },
 
       // 引擎音：i 区分玩家，speed01 为 0..1 速度比例；
-      // warn01 为 0..1 打滑预警量（gripUse 逼近极限越高越尖），缺省 0
+      // warn01 为 0..1 打滑预警量（gripUse/slip 越高，轮胎摩擦声越紧），缺省 0
       engine: function (i, speed01, warn01) {
         if (silent()) return;
         var slot = ensureEngine(i | 0);
@@ -193,11 +233,15 @@
           var w = clamp01(warn01);
           var t = ctx.currentTime;
           var freq = ENGINE_BASE + s * ENGINE_SPAN;
-          slot.osc.frequency.setTargetAtTime(freq, t, 0.08);
-          slot.filter.frequency.setTargetAtTime(320 + s * 1200, t, 0.1);
+          slot.sawA.frequency.setTargetAtTime(freq, t, 0.08);
+          slot.sawB.frequency.setTargetAtTime(freq * ENGINE_DETUNE, t, 0.08);
+          slot.filter.frequency.setTargetAtTime(380 + s * 1500, t, 0.1);
           slot.gain.gain.setTargetAtTime(ENGINE_GAIN, t, 0.1);
-          slot.warnOsc.frequency.setTargetAtTime(freq * 2.01, t, 0.08);
-          slot.warnGain.gain.setTargetAtTime(w * 0.022, t, 0.06);
+          slot.lfoDepth.gain.setTargetAtTime(0.014, t, 0.1);
+          // 轮胎摩擦：越贴极限中心频率越高、越响；带通抖动给出"吱吱嘎嘎"的滚动感
+          slot.bp.frequency.setTargetAtTime(1800 + w * 1600, t, 0.08);
+          slot.bpLfoDepth.gain.setTargetAtTime(320 + w * 160, t, 0.1);
+          slot.screechGain.gain.setTargetAtTime(w * (0.10 + 0.05 * s), t, 0.05);
         } catch (err) { /* 静默失败 */ }
       },
 
@@ -258,13 +302,14 @@
         detachGesture();
         for (var k in engines) {
           try {
-            engines[k].osc.stop();
-            engines[k].osc.disconnect();
-            engines[k].gain.disconnect();
+            engines[k].sawA.stop(); engines[k].sawA.disconnect();
+            engines[k].sawB.stop(); engines[k].sawB.disconnect();
             engines[k].filter.disconnect();
-            engines[k].warnOsc.stop();
-            engines[k].warnOsc.disconnect();
-            engines[k].warnGain.disconnect();
+            engines[k].gain.disconnect();
+            engines[k].lfoDepth.disconnect();
+            engines[k].bp.disconnect();
+            engines[k].bpLfoDepth.disconnect();
+            engines[k].screechGain.disconnect();
           } catch (err) { /* 忽略 */ }
         }
         engines = [];

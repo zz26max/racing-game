@@ -306,7 +306,8 @@ test('UI：各阶段芯片注册命中区，触控目标 ≥44 且不与油门�
 test('音效：engine 预警参数、click/save/beep 入队，静音时全部静默', () => {
   const audioMod = require('../js/audio.js');
   const scheduled = [];   // osc.start(t) 且 t 为数字的音（定时音）
-  let contOsc = 0;        // 持续音（引擎/预警层）计数
+  let contOsc = 0;        // 持续振荡器计数（双锯齿 + 两条 LFO）
+  let contNoise = 0;      // 持续噪声源计数（轮胎摩擦层）
   const ctx = {
     state: 'running', sampleRate: 44100, currentTime: 1.0, destination: {},
     resume: () => Promise.resolve(true),
@@ -326,7 +327,7 @@ test('音效：engine 预警参数、click/save/beep 入队，静音时全部静
     },
     createBiquadFilter: () => ({ type: '', frequency: { value: 0, setTargetAtTime() {} }, Q: { value: 0 }, connect() {} }),
     createBuffer: (c, len) => ({ getChannelData: () => new Float32Array(len || 64) }),
-    createBufferSource: () => ({ buffer: null, connect() {}, start() { scheduled.push({ noise: true }); }, stop() {}, disconnect() {} }),
+    createBufferSource: () => ({ buffer: null, loop: false, connect() {}, start() { contNoise += 1; }, stop() {}, disconnect() {} }),
     close() {}
   };
   const win = {
@@ -339,9 +340,10 @@ test('音效：engine 预警参数、click/save/beep 入队，静音时全部静
     const audio = audioMod.createAudio();
     audio.resume();   // ctx 惰性创建（真实浏览器由首次手势触发）；state 桩固定 'running'
 
-    // 引擎：持续音 2 条（sawtooth 本体 + square 预警层）
+    // 引擎 + 摩擦层：双锯齿 + 两条 LFO 振荡器 + 一条循环噪声源
     audio.engine(0, 0.5, 0.9);
-    assert.ok(contOsc >= 2, 'engine 应建立本体+预警两条持续振荡器，实际 ' + contOsc);
+    assert.ok(contOsc >= 4, 'engine 应建立双锯齿+两条LFO共4条持续振荡器，实际 ' + contOsc);
+    assert.ok(contNoise >= 1, 'engine 应建立循环噪声源（轮胎摩擦层），实际 ' + contNoise);
 
     // 定时音入队
     audio.beep(440);

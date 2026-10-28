@@ -410,7 +410,9 @@
       var warn = 0;
       if (car && !car.derailed) {
         var gu = Math.max(Number(car.gripUse) || 0, 0);
-        warn = gu <= 0.75 ? 0 : clamp01((gu - 0.75) / 0.75);
+        var gripWarn = gu <= 0.75 ? 0 : clamp01((gu - 0.75) / 0.75);
+        var slipWarn = clamp01((Number(car.slip) || 0) / 0.85);   // 真实侧滑立刻出声
+        warn = Math.max(gripWarn, slipWarn);
       }
       audio.engine(i, car ? car.speed / 400 : 0, warn);
     }
