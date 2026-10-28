@@ -1,4 +1,5 @@
-/* 键盘输入（UMD：浏览器挂 window.RaceInput，Node 走 module.exports） */
+/* 键盘输入（UMD：浏览器挂 window.RaceInput，Node 走 module.exports）
+ * 触摸油门：setTouch(i, on)，左右半屏由 main.js 映射（i=0 左 / i=1 右）。 */
 (function (root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -36,14 +37,23 @@
   api.createInput = function () {
     var win = (typeof window !== 'undefined') ? window : null;
     var held = Object.create(null);
+    var touchHeld = [false, false];   // 触摸油门：0=左半屏(P1) 1=右半屏(P2)
     var edges = Object.create(null);
     var destroyed = false;
 
     function clearAll() {
       for (var k in held) delete held[k];
+      touchHeld[0] = false;
+      touchHeld[1] = false;
     }
 
     function isDown(code) { return held[code] === true; }
+
+    // 触摸油门开关：main.js 按左右半屏调用，与键盘互不影响
+    function setTouch(i, on) {
+      if (i !== 0 && i !== 1) return;
+      touchHeld[i] = !!on;
+    }
 
     function anyDown(list) {
       for (var i = 0; i < list.length; i++) if (isDown(list[i])) return true;
@@ -108,8 +118,8 @@
     var input = {
       // i=0 玩家 1，i=1 玩家 2，其他返回 0
       get: function (i) {
-        if (i === 0) return anyDown(P1_KEYS) ? 1 : 0;
-        if (i === 1) return anyDown(P2_KEYS) ? 1 : 0;
+        if (i === 0) return (anyDown(P1_KEYS) || touchHeld[0]) ? 1 : 0;
+        if (i === 1) return (anyDown(P2_KEYS) || touchHeld[1]) ? 1 : 0;
         return 0;
       },
       // 取一次边沿事件：'start' | 'pause' | 'restart' | 'mute' | 'back'
@@ -119,6 +129,7 @@
         return true;
       },
       isDown: function (code) { return isDown(String(code)); },
+      setTouch: setTouch,
       clear: clearAll,
       destroy: destroy
     };

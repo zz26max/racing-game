@@ -111,6 +111,7 @@
 
   // 开局：两辆车各入一条槽，圈数由 ?laps=N 决定（默认 3）
   function startRace() {
+    releaseAllPointers();
     if (!window.RaceRace || !window.RaceCar || !track) return;
     race = window.RaceRace.createRace({
       track: track,
@@ -158,6 +159,41 @@
     if (audio && typeof audio.resume === 'function') audio.resume();
   }
 
+  // ---- 移动端：左右半屏油门 ----
+  var activePointers = Object.create(null);   // pointerId → 0（左半屏）| 1（右半屏）
+  var touchHeld = [false, false];             // 左右半屏当前是否被按住
+
+  function zoneOfClientX(x) {
+    var w = (window.innerWidth || W);
+    return (Number(x) < w / 2) ? 0 : 1;
+  }
+
+  function setZoneHeld(zone, on) {
+    if (zone !== 0 && zone !== 1) return;
+    touchHeld[zone] = !!on;
+    if (input && typeof input.setTouch === 'function') input.setTouch(zone, on);
+    var D = window.__DBG__ || (window.__DBG__ = {});
+    D.zones = [touchHeld[0] ? 1 : 0, touchHeld[1] ? 1 : 0];
+  }
+
+  function zoneStillHeld(zone) {
+    for (var k in activePointers) { if (activePointers[k] === zone) return true; }
+    return false;
+  }
+
+  function releasePointer(id) {
+    var z = activePointers[id];
+    if (z === undefined) return;
+    delete activePointers[id];
+    if (!zoneStillHeld(z)) setZoneHeld(z, false);
+  }
+
+  function releaseAllPointers() {
+    activePointers = Object.create(null);
+    setZoneHeld(0, false);
+    setZoneHeld(1, false);
+  }
+
   // 指针事件坐标 → 1280×720 逻辑坐标（画布 CSS 尺寸等比缩放到逻辑分辨率）
   function toLogical(e) {
     var cx = e && isFinite(e.clientX) ? Number(e.clientX) : 0;
@@ -176,19 +212,50 @@
   // 页面按下（window 捕获阶段）：聚焦画布 + 标题界面切赛道
   // 命中顺序：先箭头精确框，再整行半平面回退（箭头框外、整行的左/右半边也能切）
   function onPointerDown(e) {
-    if (e && e.isPrimary === false) return;   // 多点触控只认主触点，忽略次要触点
     try { if (hudCanvas && hudCanvas.focus) hudCanvas.focus(); } catch (err) { /* 忽略 */ }
-    if (phase !== 'title') return;
-    var R = window.RaceRender;
-    if (!R) return;
-    var p = toLogical(e);
-    var hit = null;
-    try { hit = typeof R.hitTestTitleArrow === 'function' ? R.hitTestTitleArrow(p.x, p.y) : null; } catch (err2) { hit = null; }
-    if (!hit && typeof R.hitTestTitleRow === 'function') {
-      try { hit = R.hitTestTitleRow(p.x, p.y); } catch (err3) { hit = null; }
+
+    // 比赛中：按住左右半屏 = 对应玩家的油门（多点触控各自跟踪，第二根手指也算）
+    if (phase === 'countdown' || phase === 'running') {
+      var id = (e && e.pointerId !== undefined) ? e.pointerId : 'p';
+      var z = zoneOfClientX(e && e.clientX);
+      activePointers[id] = z;
+      setZoneHeld(z, true);
+      if (e && e.preventDefault) e.preventDefault();
+      return;
     }
-    if (hit === 'left') switchTrack(-1);
-    else if (hit === 'right') switchTrack(1);
+
+    if (phase !== 'title' && phase !== 'finished') return;
+    var R = window.RaceRender;
+    var hit = null;
+    if (R) {
+      var p = toLogical(e);
+      try { hit = typeof R.hitTestTitleArrow === 'function' ? R.hitTestTitleArrow(p.x, p.y) : null; } catch (err2) { hit = null; }
+      if (!hit && typeof R.hitTestTitleRow === 'function') {
+        try { hit = R.hitTestTitleRow(p.x, p.y); } catch (err3) { hit = null; }
+      }
+    }
+    if (hit === 'left') { switchTrack(-1); return; }
+    if (hit === 'right') { switchTrack(1); return; }
+    // 手机点按任意处开始；鼠标点击维持旧行为（只聚焦）
+    if (!e || e.pointerType !== 'mouse') startRace();
+  }
+
+  function onPointerUp(e) {
+    if (!e) return;
+    releasePointer((e.pointerId !== undefined) ? e.pointerId : 'p');
+  }
+
+  // 手指从一半划到另一半：释放旧区、按住新区
+  function onPointerMove(e) {
+    if (!e) return;
+    var id = (e.pointerId !== undefined) ? e.pointerId : 'p';
+    var z = activePointers[id];
+    if (z === undefined) return;
+    var nz = zoneOfClientX(e.clientX);
+    if (nz === z) return;
+    activePointers[id] = nz;
+    if (!zoneStillHeld(z)) setZoneHeld(z, false);
+    setZoneHeld(nz, true);
   }
 
   // Enter 开始 / R 重开 / P 暂停 / M 静音 / Esc 回标题
@@ -311,13 +378,16 @@
     var keys = D.keys && D.keys.length ? D.keys.slice(-3).join(',') : '-';
     var pt = (D.pt && isFinite(D.pt.x) && isFinite(D.pt.y))
       ? (Math.round(D.pt.x) + ',' + Math.round(D.pt.y)) : '-';
+    D.phase = phase;
+    D.zones = [touchHeld[0] ? 1 : 0, touchHeld[1] ? 1 : 0];
     var errCount = window.__ERRORS__ && window.__ERRORS__.length ? window.__ERRORS__.length : 0;
     el.textContent =
       'BUILD5 list=' + trackList.length + ' phase=' + phase + ' id=' + trackId + ' name=' + name + '\n' +
       'calls=' + (D.calls || 0) + ' dir=' + (D.lastDir === undefined || D.lastDir === null ? '-' : D.lastDir) +
         ' guard=' + (D.guarded || '-') + '\n' +
       'key=' + keys + ' pt=' + pt + '\n' +
-      'err=' + (D.err || '-') + ' errors=' + errCount;
+      'err=' + (D.err || '-') + ' errors=' + errCount + '\n' +
+      'zones=P1:' + (touchHeld[0] ? 1 : 0) + ' P2:' + (touchHeld[1] ? 1 : 0) + ' phase=' + phase;
   }
 
   // 帧入口：计时、输入、按阶段推进
@@ -380,7 +450,8 @@
       countdownT: race ? race.countdown - race.t : 0,
       race: race, best: best, particles: [],
       trackName: track ? track.name : '', trackDesc: track ? track.desc : '',
-      trackIndex: trackIndex(), trackCount: trackList.length
+      trackIndex: trackIndex(), trackCount: trackList.length,
+      portrait: (window.innerHeight || H) > (window.innerWidth || W),
     };
   }
 
@@ -507,6 +578,13 @@
   // 指针：挂在 window 捕获阶段，避免被画布/叠加层吃掉（#hud 是 pointer-events:none，
   // 真实点击会穿到下层，单挂某个画布不可靠）；一次点击只进一次，无需防抖。
   window.addEventListener('pointerdown', onPointerDown, true);
+  window.addEventListener('pointerup', onPointerUp, true);
+  window.addEventListener('pointercancel', onPointerUp, true);
+  window.addEventListener('pointermove', onPointerMove, true);
+  window.addEventListener('blur', releaseAllPointers, false);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) releaseAllPointers();
+  }, false);
 
   init();
   resize();

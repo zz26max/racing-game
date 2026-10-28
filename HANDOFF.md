@@ -354,3 +354,32 @@
   rAF 停摆、`screenshot` 全部 `surface preparation timed out`，后续连标签页都被回收）。
   请强制刷新（脚本已升到 `?v=7`）后确认：① 是 3D 透视画面 ② 有灰色护栏与红白路肩
   ③ 切换赛道后 3D 赛道跟着换。若又变成平面无透视画面，看控制台是否有 `[RaceGL]` 报错。
+
+## 2026-10-28 第九轮：移动端左右半屏油门
+
+### 交互
+- 比赛阶段（countdown / running）：`pointerdown` 按 `clientX` 与窗口中线比较，左半屏 → P1、右半屏 → P2，`input.setTouch(i, true)`；`pointerup` / `pointercancel` 释放；`pointermove` 允许手指从一半划到另一半（释放旧区、按住新区）。
+- 多指：`pointerId → zone` 映射，第二根手指不再被 `isPrimary === false` 挡掉（旧代码会挡）。
+- 标题 / 结算界面：触摸或笔点按任意处 → `startRace()`；鼠标点击维持旧行为（只聚焦），避免桌面误触开赛。
+- 失焦（`window blur`）、切后台（`visibilitychange`）、`startRace()` 开头都会 `releaseAllPointers()`，避免油门卡住。
+
+### 改动文件
+- `js/input.js`：新增 `touchHeld`、`setTouch(i, on)`，`get(i)` = 键盘 || 触摸；`clearAll()`/`destroy()` 一并清零。
+- `js/main.js`：新增 `activePointers` / `touchHeld` / `zoneOfClientX` / `setZoneHeld` / `releasePointer` / `releaseAllPointers`；重写 `onPointerDown`、新增 `onPointerUp` / `onPointerMove` 并注册 `pointerup` / `pointercancel` / `pointermove`（捕获阶段）；`startRace()` 先清指针；`snapshot()` 增加 `portrait`；`__DBG__` 增加 `phase` 与 `zones`，`#dbg` 面板多一行 `zones=P1:x P2:y phase=…`。
+- `js/render.js`：标题提示改为「手机：按住左右半屏加速」+「点击 / 点按任意处开始」；倒计时阶段底部加一行油门提示；新增 `drawPortraitHint()`，竖屏时在 `drawTitle` / `drawHUD` 末尾盖遮罩提示横屏。
+- `styles.css`：`html, body` 加 `touch-action: none`、`overscroll-behavior: none`、禁选中/长按菜单；`#game,#hud` 加 `touch-action: none`、去点击高亮。
+- `index.html`：viewport 加 `maximum-scale=1.0, user-scalable=no, viewport-fit=cover`，加 `mobile-web-app-capable`，脚本版本统一升到 `?v=8`。
+- `test/race.test.js`：新增用例 9「触摸油门：setTouch 控制 P1/P2，clear 后全部释放」。
+- `_debug/_boot-sim.js`：window 桩补 `pointerup` / `pointercancel` / `pointermove` 监听收集与 `dispatchPointer()`；新增流程 3：Esc 回标题 → 触摸点按开赛 → 左/右半屏、双指 `zones` 断言。
+
+### 验证（实跑）
+- `node --check js/input.js js/main.js js/render.js` 全部通过（分开跑，无输出）。
+- `node _debug/_boot-sim.js` exit 0：`[tap-start] phase=countdown`、`[zone-left] down→1 up→0`、`[zone-right] down→1 up→0`、`[zone-both] 双指 [1,1] → 松开 [0,0]`，旧流程 `[click]/[row-click]/[keyD]/[guard]/[key]` 全部保留通过。
+- `node -e "require('./test/race.test.js')"` **9/9**。
+- `node _debug/_derail-probe.js` figure8 20/20、attic 20/20（物理未改动）。
+
+### 已知限制 / 待办
+1. 移动端没有暂停 / 重开 / 回标题的屏上按钮，仍靠键盘（P / R / Esc）。
+2. 竖屏只提示不强制；16:9 竖屏黑边较大。
+3. 桌面鼠标按住画面也会给对应半边油门（便于调试），P2 没有鼠标键。
+4. 真机（iOS Safari / Android Chrome）未验证：localStorage 记忆赛道、iOS 双击缩放、多指同时按、转屏后 letterbox 需人工确认。

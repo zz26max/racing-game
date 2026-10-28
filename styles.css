@@ -17,6 +17,11 @@ html,
 body {
   width: 100%;
   height: 100%;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 body {
@@ -26,6 +31,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 移动端：画布不吃浏览器手势（滚动/缩放/双击放大），点击高亮也去掉 */
+#game,
+#hud {
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* 两层画布叠放：#game 放 3D，画面尺寸由 main.js 的 16:9 letterbox 计算后写入内联样式 */

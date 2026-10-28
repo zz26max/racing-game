@@ -51,6 +51,8 @@ const documentStub = {
 var rafQueue = [];
 var keyHandlers = [];
 var pointerHandlers = [];   // window 上的 pointerdown（main.js 现在挂在 window 捕获阶段）
+var pointerUpHandlers = [];      // window 上的 pointerup / pointercancel
+var pointerMoveHandlers = [];    // window 上的 pointermove
 var store = {};
 function pressKey(code) {
   const e = { code, preventDefault: noop, repeat: false };
@@ -83,6 +85,27 @@ function clickPage(clientX, clientY) {
     }
   }
 }
+
+// 通用指针派发：opts 可给 pointerId / pointerType / isPrimary
+function dispatchPointer(type, clientX, clientY, opts) {
+  opts = opts || {};
+  const e = {
+    type: type, clientX: clientX, clientY: clientY,
+    pointerId: opts.pointerId === undefined ? 1 : opts.pointerId,
+    pointerType: opts.pointerType === undefined ? 'touch' : opts.pointerType,
+    isPrimary: opts.isPrimary === undefined ? true : opts.isPrimary,
+    preventDefault: noop
+  };
+  const list = (type === 'pointerdown') ? pointerHandlers
+    : (type === 'pointermove') ? pointerMoveHandlers
+    : pointerUpHandlers;
+  for (const cb of list) {
+    try { cb(e); } catch (err) {
+      console.log('  ✗ window ' + type + ' 抛错 →', err.constructor.name + ':', err.message);
+      process.exit(1);
+    }
+  }
+}
 var now = 0;
 // 最小 AudioContext 桩（真实浏览器里 resume/振荡器都可用，这里只保证不抛错）
 class AudioContextStub {
@@ -106,6 +129,8 @@ const windowStub = {
   addEventListener(type, cb) {
     if (type === 'keydown') keyHandlers.push(cb);
     else if (type === 'pointerdown') pointerHandlers.push(cb);
+    else if (type === 'pointerup' || type === 'pointercancel') pointerUpHandlers.push(cb);
+    else if (type === 'pointermove') pointerMoveHandlers.push(cb);
   },
   removeEventListener: noop,
   requestAnimationFrame(cb) { rafQueue.push(cb); return rafQueue.length; },
@@ -228,4 +253,52 @@ console.log('当前赛道:', windowStub.RaceTrack ? (function(){ try { return wi
 const selftest = sandbox.__SELFTEST__;
 if (selftest) console.log('selftest:', JSON.stringify(selftest).slice(0, 120));
 console.log('document.title:', documentStub.title || '(未设置)');
+// ---- 流程 3：移动端左右半屏油门 ----
+pressKey('Escape'); runFrames(8);
+if (windowStub.__DBG__.phase !== 'title') {
+  console.log('  ✗ Esc 后应回到 title，实际 =', windowStub.__DBG__.phase); process.exit(1);
+}
+
+// 3a：点按标题任意处开始（触摸，不能点在选择器那一行 y∈[324,412]）
+dispatchPointer('pointerdown', 100, 600, { pointerId: 3, pointerType: 'touch' });
+dispatchPointer('pointerup', 100, 600, { pointerId: 3, pointerType: 'touch' });
+runFrames(10);
+if (windowStub.__DBG__.phase !== 'countdown' && windowStub.__DBG__.phase !== 'running') {
+  console.log('  ✗ 点按后应开赛，实际 phase =', windowStub.__DBG__.phase); process.exit(1);
+}
+console.log('[tap-start] phase=' + windowStub.__DBG__.phase);
+
+// 3b：左半屏按住 = P1 油门
+dispatchPointer('pointerdown', 100, 400, { pointerId: 4 });
+runFrames(4);
+if (windowStub.__DBG__.zones[0] !== 1) { console.log('  ✗ 左半屏按住后 zones=', JSON.stringify(windowStub.__DBG__.zones)); process.exit(1); }
+dispatchPointer('pointerup', 100, 400, { pointerId: 4 });
+runFrames(4);
+if (windowStub.__DBG__.zones[0] !== 0) { console.log('  ✗ 左半屏松开后 zones=', JSON.stringify(windowStub.__DBG__.zones)); process.exit(1); }
+console.log('[zone-left] down→1 up→0');
+
+// 3c：右半屏按住 = P2 油门
+dispatchPointer('pointerdown', 1100, 400, { pointerId: 5 });
+runFrames(4);
+if (windowStub.__DBG__.zones[1] !== 1) { console.log('  ✗ 右半屏按住后 zones=', JSON.stringify(windowStub.__DBG__.zones)); process.exit(1); }
+dispatchPointer('pointerup', 1100, 400, { pointerId: 5 });
+runFrames(4);
+if (windowStub.__DBG__.zones[1] !== 0) { console.log('  ✗ 右半屏松开后 zones=', JSON.stringify(windowStub.__DBG__.zones)); process.exit(1); }
+console.log('[zone-right] down→1 up→0');
+
+// 3d：双指同时按住左右两半
+dispatchPointer('pointerdown', 100, 400, { pointerId: 6, isPrimary: true });
+dispatchPointer('pointerdown', 1100, 400, { pointerId: 7, isPrimary: false });
+runFrames(4);
+if (windowStub.__DBG__.zones[0] !== 1 || windowStub.__DBG__.zones[1] !== 1) {
+  console.log('  ✗ 双指后 zones=', JSON.stringify(windowStub.__DBG__.zones)); process.exit(1);
+}
+dispatchPointer('pointerup', 100, 400, { pointerId: 6 });
+dispatchPointer('pointerup', 1100, 400, { pointerId: 7 });
+runFrames(4);
+if (windowStub.__DBG__.zones[0] !== 0 || windowStub.__DBG__.zones[1] !== 0) {
+  console.log('  ✗ 双指松开后 zones=', JSON.stringify(windowStub.__DBG__.zones)); process.exit(1);
+}
+console.log('[zone-both] 双指 [1,1] → 松开 [0,0]');
+
 console.log('启动模拟 ✓ 点击/键盘/开赛全部流程通过');

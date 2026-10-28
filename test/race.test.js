@@ -227,3 +227,23 @@ test('画面取景：两条赛道平移到画布中心后完整落在 1280×720 
     assert.ok(y1 + oy + pad <= H, id + ' 下方出画：' + (y1 + oy + pad).toFixed(0));
   }
 });
+
+// 9) 触摸油门：setTouch 独立于键盘，按下/松开即时生效
+test('触摸油门：setTouch 控制 P1/P2，clear 后全部释放', () => {
+  const inputMod = require('../js/input.js');
+  const inp = inputMod.createInput();
+  assert.equal(inp.get(0), 0);
+  assert.equal(inp.get(1), 0);
+  inp.setTouch(0, true);
+  assert.equal(inp.get(0), 1, '按住左半屏应给 P1 油门');
+  assert.equal(inp.get(1), 0, '不应串到 P2');
+  inp.setTouch(0, false);
+  assert.equal(inp.get(0), 0);
+  inp.setTouch(1, true);
+  assert.equal(inp.get(1), 1, '按住右半屏应给 P2 油门');
+  inp.setTouch(1, 999);
+  assert.equal(inp.get(1), 1, '越界 index 应被忽略');
+  inp.clear();
+  assert.equal(inp.get(1), 0, 'clear 后触摸油门应释放');
+  inp.destroy();
+});

@@ -554,8 +554,18 @@
     drawPlayerPanel(ctx, race, 0, false, s.best);
     drawPlayerPanel(ctx, race, 1, true, s.best);
     drawCenterHUD(ctx, race, phase);
-    if (phase === 'countdown') drawCountdown(ctx, s);
+    if (phase === 'countdown') {
+      drawCountdown(ctx, s);
+      ctx.save();
+      setFont(ctx, 'normal', 14);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(233,220,196,.6)';
+      ctx.fillText('按住左半屏 = P1 油门　按住右半屏 = P2 油门', W / 2, H - 36);
+      ctx.restore();
+    }
     if (phase === 'finished') drawResult(ctx, s);
+    if (s.portrait) drawPortraitHint(ctx);
     ctx.restore();
   }
 
@@ -594,6 +604,22 @@
     if (py < row.baseY - TITLE_ROW_HALF_H || py > row.baseY + TITLE_ROW_HALF_H) return null;
     if (px < row.minX || px > row.maxX) return null;
     return px < row.nameCx ? 'left' : 'right';
+  }
+
+  // 竖屏提示：不阻断游戏，只盖一层半透明遮罩提醒旋转设备
+  function drawPortraitHint(ctx) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(27,23,20,.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    setFont(ctx, 'bold', 26);
+    ctx.fillStyle = 'rgba(233,220,196,.95)';
+    ctx.fillText('建议横屏游玩', W / 2, H / 2 - 18);
+    setFont(ctx, 'normal', 16);
+    ctx.fillStyle = 'rgba(233,220,196,.75)';
+    ctx.fillText('旋转设备后继续', W / 2, H / 2 + 22);
+    ctx.restore();
   }
 
   // 标题界面：压暗底图 + 标题 / 副标题 / 操作提示 / 呼吸闪烁的开始提示
@@ -666,16 +692,17 @@
 
     setFont(ctx, 'normal', 17);
     ctx.fillStyle = COL.ink;
-    ctx.fillText('P1：W 或空格 油门　　P2：↑ / Enter / 右 Shift 油门', W / 2, 420);
+    ctx.fillText('P1：W / 空格　P2：↑ / Enter　·　手机：按住左右半屏加速', W / 2, 420);
     ctx.fillText((trackCount > 1 ? '←/→ 或 A/D 或点击箭头切赛道　' : '') + 'P 暂停　M 静音　R 重开', W / 2, 446);
 
     // 1Hz 呼吸闪烁（0.45~1，纸卡上不用金色）
     setFont(ctx, 'bold', 22);
     ctx.fillStyle = COL.ink;
     ctx.globalAlpha = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
-    ctx.fillText('点击页面后按 Enter 开始', W / 2, 470);
+    ctx.fillText('点击 / 点按任意处开始', W / 2, 470);
     ctx.globalAlpha = 1;
 
+    if (s.portrait) drawPortraitHint(ctx);
     ctx.restore();
   }
 
