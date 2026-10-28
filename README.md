@@ -137,7 +137,8 @@ node _debug/_occlusion-probe.js         # 固定机位下桥下段的遮挡区�
 ✔ 画面取景：两条赛道平移到画布中心后完整落在 1280×720 内
 ✔ 触摸油门：setTouch 控制 P1/P2，clear 后全部释放
 ✔ UI：各阶段芯片注册命中区，触控目标 ≥44 且不与油门区冲突
-tests 10 / pass 10 / fail 0
+✔ 音效：engine 预警参数、click/save/beep 入队，静音时全部静默
+tests 11 / pass 11 / fail 0
 
 _derail-probe（2026-10-28，阁楼几何重排后）：figure8 20/20、attic 20/20 通过
   起跳外沿最大 44.50px（护栏内壁 45）——两条赛道都不再嵌入护栏
@@ -153,6 +154,7 @@ _derail-probe（2026-10-28，阁楼几何重排后）：figure8 20/20、attic 20
 
 - 单人也能开：P2 不动即可，没有 AI 对手，也没有联网对战。
 - 音效全部是 WebAudio 合成，没有音频素材；首次按键/点击后才解锁 AudioContext。
+- 反馈音效：倒计时 3/2/1 低 beep + GO 高 beep；引擎音叠"打滑预警层"（gripUse 逼近极限越高越尖，听声即知该松油）；救车成功上行双音；过圈 chime / 脱轨 boom / 完赛 fanfare / 纸卡按钮 click。
 - 两条赛道，形状参数（控制点/圆弧）集中在 `js/track.js` 的 `TRACK_DEFS`；阁楼赛道用 turtle 命令描述（`F` 前进 / `L`·`R` 转向），改完先跑 `node _debug/_turtle-solve.js` 让两段直道自动闭合，再由自交/净空断言与 `_pinch-audit.js` 兜底。
 - 结算页只展示最近 3 圈分圈，不展开全部圈速。
 - 移动端支持触屏：屏幕左右半边分别是 P1/P2 油门（见「移动端」一节）；暂停 / 重开 / 回标题仍只支持键盘。

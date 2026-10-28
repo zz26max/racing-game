@@ -108,11 +108,19 @@ function dispatchPointer(type, clientX, clientY, opts) {
 }
 var now = 0;
 // 最小 AudioContext 桩（真实浏览器里 resume/振荡器都可用，这里只保证不抛错）
+// 录音：osc.start(t) 时记下 { freq, t, type }；t 为数字 = 定时音（beep/tone），undefined = 持续音（引擎）
+const audioLog = [];
 class AudioContextStub {
   constructor() { this.currentTime = 0; this.sampleRate = 44100; this.destination = {}; this.state = 'running'; }
   resume() { return Promise.resolve(); }
   createGain() { return { connect: noop, disconnect: noop, gain: param() }; }
-  createOscillator() { return { connect: noop, disconnect: noop, start: noop, stop: noop, type: '', frequency: param(), detune: param() }; }
+  createOscillator() {
+    return {
+      connect: noop, disconnect: noop, stop: noop, type: '', detune: param(),
+      frequency: param(),
+      start(t) { audioLog.push({ freq: this.frequency.value, t: t, type: this.type }); }
+    };
+  }
   createBiquadFilter() { return { connect: noop, disconnect: noop, type: '', frequency: param(), Q: param(), detune: param() }; }
   createDynamicsCompressor() { return { connect: noop, disconnect: noop, threshold: param(), knee: param(), ratio: param(), attack: param(), release: param() }; }
   createBuffer(ch, len, rate) { return { getChannelData: () => new Float32Array(len || 1) }; }
@@ -401,4 +409,29 @@ dispatchPointer('pointerup', 805, 374, { pointerId: 13 });
 runFrames(2);
 console.log('[ui-back] 暂停面板回标题 ✓');
 
-console.log('启动模拟 ✓ 点击/键盘/开赛/屏上按钮全部流程通过');
+// ---- 流程 5：反馈层音效（倒计时 beep / 按钮点击音）----
+audioLog.length = 0;
+pressKey('Escape'); runFrames(8);
+dispatchPointer('pointerdown', 640, 536, { pointerId: 20 });   // 开始比赛
+runFrames(8);
+dispatchPointer('pointerup', 640, 536, { pointerId: 20 });
+runFrames(210);   // 3.5s：覆盖 3/2/1 三档 + GO
+const beeps = audioLog.filter(e => typeof e.t === 'number');
+const low = beeps.filter(e => e.freq === 440).length;
+const high = beeps.filter(e => e.freq === 990).length;
+if (low < 3 || high < 1) {
+  console.log('  ✗ 倒计时 beep 不全：440×' + low + '，990×' + high + '，全部=' + JSON.stringify(beeps)); process.exit(1);
+}
+console.log('[sfx-countdown] 3/2/1 低 beep ×' + low + ' + GO 高 beep ×' + high + ' ✓');
+
+audioLog.length = 0;
+dispatchPointer('pointerdown', 907, 46, { pointerId: 21 });    // 比赛中静音芯片
+runFrames(4);
+dispatchPointer('pointerup', 907, 46, { pointerId: 21 });
+runFrames(2);
+const ticks = audioLog.filter(e => typeof e.t === 'number' && e.freq === 1250).length;
+if (ticks < 1) { console.log('  ✗ 芯片点击音缺失，audioLog=' + JSON.stringify(audioLog)); process.exit(1); }
+pressKey('KeyM'); runFrames(2);   // 点芯片进入静音，M 恢复有声（同时验证键盘路径）
+console.log('[sfx-click] 芯片点击音 ✓（并经 M 键恢复有声）');
+
+console.log('启动模拟 ✓ 点击/键盘/开赛/屏上按钮/反馈音效全部流程通过');

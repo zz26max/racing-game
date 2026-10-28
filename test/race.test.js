@@ -299,3 +299,74 @@ test('UI：各阶段芯片注册命中区，触控目标 ≥44 且不与油门�
   assert.equal(R.hitTestUI(640, 360), null, 'portraitHint=false 时不注册遮罩');
   assert.equal(R.hitTestUI(851, 46), 'pause', '遮罩关闭后暂停芯片恢复可命中');
 });
+
+// 11) 反馈层音效：接口存在、参数被消费、静音门控生效（Node 桩 AudioContext）
+// 说明：预警引擎音 / 倒计时 beep / 救车音 / 点击音是「听声知极限」的核心反馈；
+// boot-sim 只能断言「响了几次」，这里断言「参数与门控」——muted 时一个振荡器都不许启动。
+test('音效：engine 预警参数、click/save/beep 入队，静音时全部静默', () => {
+  const audioMod = require('../js/audio.js');
+  const scheduled = [];   // osc.start(t) 且 t 为数字的音（定时音）
+  let contOsc = 0;        // 持续音（引擎/预警层）计数
+  const ctx = {
+    state: 'running', sampleRate: 44100, currentTime: 1.0, destination: {},
+    resume: () => Promise.resolve(true),
+    createGain: () => ({ gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {} }, connect() {} }),
+    createOscillator: () => {
+      const osc = {
+        type: 'sine', detune: { value: 0 },
+        frequency: { value: 0, setValueAtTime() {}, setTargetAtTime() {}, exponentialRampToValueAtTime() {} },
+        connect() {},
+        start(t) {
+          if (t === undefined) { contOsc += 1; return; }
+          scheduled.push({ freq: osc.frequency.value, type: osc.type });
+        },
+        stop() {}, disconnect() {}
+      };
+      return osc;
+    },
+    createBiquadFilter: () => ({ type: '', frequency: { value: 0, setTargetAtTime() {} }, Q: { value: 0 }, connect() {} }),
+    createBuffer: (c, len) => ({ getChannelData: () => new Float32Array(len || 64) }),
+    createBufferSource: () => ({ buffer: null, connect() {}, start() { scheduled.push({ noise: true }); }, stop() {}, disconnect() {} }),
+    close() {}
+  };
+  const win = {
+    AudioContext: function () { return ctx; },
+    addEventListener() {}, removeEventListener() {}
+  };
+  const prevWindow = global.window;
+  global.window = win;
+  try {
+    const audio = audioMod.createAudio();
+    audio.resume();   // ctx 惰性创建（真实浏览器由首次手势触发）；state 桩固定 'running'
+
+    // 引擎：持续音 2 条（sawtooth 本体 + square 预警层）
+    audio.engine(0, 0.5, 0.9);
+    assert.ok(contOsc >= 2, 'engine 应建立本体+预警两条持续振荡器，实际 ' + contOsc);
+
+    // 定时音入队
+    audio.beep(440);
+    audio.click();
+    audio.save();
+    const freqs = scheduled.map(x => x.freq);
+    assert.ok(freqs.indexOf(440) >= 0, 'beep(440) 应入队');
+    assert.ok(freqs.indexOf(1250) >= 0, 'click tick 应入队');
+    assert.ok(freqs.indexOf(660) >= 0, 'save 上行第二音应入队');
+    const beforeMuted = scheduled.length;
+
+    // 静音门控：muted 期间一个新音都不入队
+    audio.setMuted(true);
+    audio.beep(440);
+    audio.click();
+    audio.save();
+    audio.boom();
+    audio.engine(1, 0.5, 1);
+    assert.equal(scheduled.length, beforeMuted, '静音期间不得新增任何音');
+
+    audio.setMuted(false);
+    audio.beep(440);
+    assert.equal(scheduled.length, beforeMuted + 1, '解除静音后恢复入队');
+    audio.destroy();
+  } finally {
+    if (prevWindow === undefined) delete global.window; else global.window = prevWindow;
+  }
+});

@@ -454,3 +454,39 @@
 ### 验证
 - `node --test test/race.test.js` 10/10；`_boot-sim` 全流程（含新的 [ui-start]）通过；
   `_gl-smoke` 两赛道通过。
+
+## 2026-10-29 第十二轮：反馈层（手感 × 音效交集）
+
+### 动机
+核心戏剧点是「贴极限 → 松油救车 → 没救住甩出」，但反馈链断裂：判断依据在 HUD 抓地条
+（视线在车上看不到），等 boom 响已脱轨。audio.js 里 beep(freq) 写好却无人调用。
+
+### 改动
+- **audio.js**：
+  - `engine(i, speed01, warn01)` 新增第三参：每玩家引擎加一条 square 谐波"预警层"
+    （频率 = 引擎基频×2.01，增益 = warn01×0.022）——黄区起步、越贴极限越尖；
+    setMuted/destroy 同步覆盖预警节点。
+  - `click()`：1250Hz 50ms triangle tick（纸卡芯片按下）。
+  - `save()`：440→660 triangle 上行双音（比过圈 chime 660→990 sine 低而钝，音色可区分）。
+- **main.js**：
+  - `countdownSounds()`：与画面同一阈值（COUNTDOWN_GO=0.8）——3/2/1 各一声 440、
+    GO 一声 990，按档变化沿触发（cdSound 档位状态，startRace 复位）。
+  - `saveFeedback()`：saveWindow（超限且已松油）进入即"武装"，gripUse 回落 <1 的那一刻
+    播 save()；脱轨清除武装（boom 已负责该时刻）。每步在 step 主循环里逐车跟踪。
+  - `engineSounds()` 传 warn01 = clamp((gripUse-0.75)/0.75)（黄区 0→红区渐满）。
+  - 屏上按钮按下时 `audio.click()`。
+- **boot-sim**：AudioContext 桩升级为"录音"——osc.start(t) 记 {freq,t,type}（t 为数字 =
+  定时音，undefined = 引擎持续音）；流程 5 断言倒计时 440×3 + 990×1、芯片 1250 tick。
+- **race.test 用例 11**：Node 桩 AudioContext 断言 engine 建本体+预警两条持续振荡器、
+  beep/click/save 入队频率正确、**muted 期间零新增**（门控）、解除后恢复。
+  注意：ctx 惰性创建，测试需先 audio.resume()。
+
+### 验证
+- `node --test` 11/11；`_boot-sim` 全流程（含流程 5 [sfx-countdown]/[sfx-click]）通过；
+  `_gl-smoke` 两赛道通过。物理零改动，_derail-probe 不需重跑。
+- 脚本版本 ?v=10 → ?v=11；build 标记 → 11。
+
+### 仍未完成
+- 预警音的"好听度"需真机听：square×2.01 的粗糙感是否刺耳、warn 增益 0.022 是否够/过；
+  参数都在 audio.js 顶部附近，好调。
+- 真机移动端验证（历轮挂起）：iOS Safari 双指、切后台、转屏、音频解锁时机。

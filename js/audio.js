@@ -129,7 +129,8 @@
       } catch (err) { /* 静默失败 */ }
     }
 
-    // 每个玩家一条 sawtooth + lowpass 引擎音
+    // 每个玩家一条 sawtooth + lowpass 引擎音，外加一条 square 谐波作"打滑预警"层：
+    // 平时增益 0，gripUse 逼近极限时按 warn01 抬起来——引擎声发尖 = 该松油了
     function ensureEngine(i) {
       if (engines[i]) return engines[i];
       try {
@@ -146,7 +147,15 @@
         filter.connect(gain);
         gain.connect(master);
         osc.start();
-        engines[i] = { osc: osc, filter: filter, gain: gain };
+        var warnOsc = ctx.createOscillator();
+        warnOsc.type = 'square';
+        warnOsc.frequency.value = ENGINE_BASE * 2.01;
+        var warnGain = ctx.createGain();
+        warnGain.gain.value = 0;
+        warnOsc.connect(warnGain);
+        warnGain.connect(master);
+        warnOsc.start();
+        engines[i] = { osc: osc, filter: filter, gain: gain, warnOsc: warnOsc, warnGain: warnGain };
         return engines[i];
       } catch (err) {
         return null;
@@ -162,7 +171,10 @@
         if (running()) {
           try {
             var t = ctx.currentTime;
-            for (var k in engines) engines[k].gain.gain.setTargetAtTime(muted ? 0 : ENGINE_GAIN, t, 0.05);
+            for (var k in engines) {
+              engines[k].gain.gain.setTargetAtTime(muted ? 0 : ENGINE_GAIN, t, 0.05);
+              engines[k].warnGain.gain.setTargetAtTime(0, t, 0.05);
+            }
           } catch (err) { /* 静默失败 */ }
         }
         return muted;
@@ -170,17 +182,22 @@
 
       isMuted: function () { return muted; },
 
-      // 引擎音：i 区分玩家，speed01 为 0..1 速度比例
-      engine: function (i, speed01) {
+      // 引擎音：i 区分玩家，speed01 为 0..1 速度比例；
+      // warn01 为 0..1 打滑预警量（gripUse 逼近极限越高越尖），缺省 0
+      engine: function (i, speed01, warn01) {
         if (silent()) return;
         var slot = ensureEngine(i | 0);
         if (!slot) return;
         try {
           var s = clamp01(speed01);
+          var w = clamp01(warn01);
           var t = ctx.currentTime;
-          slot.osc.frequency.setTargetAtTime(ENGINE_BASE + s * ENGINE_SPAN, t, 0.08);
+          var freq = ENGINE_BASE + s * ENGINE_SPAN;
+          slot.osc.frequency.setTargetAtTime(freq, t, 0.08);
           slot.filter.frequency.setTargetAtTime(320 + s * 1200, t, 0.1);
           slot.gain.gain.setTargetAtTime(ENGINE_GAIN, t, 0.1);
+          slot.warnOsc.frequency.setTargetAtTime(freq * 2.01, t, 0.08);
+          slot.warnGain.gain.setTargetAtTime(w * 0.022, t, 0.06);
         } catch (err) { /* 静默失败 */ }
       },
 
@@ -212,6 +229,17 @@
         tone(f, 0, 0.12, 0.18, 'sine');
       },
 
+      // UI 点击：短促 triangle tick（纸卡芯片按下）
+      click: function () {
+        tone(1250, 0, 0.05, 0.07, 'triangle');
+      },
+
+      // 救车成功：两音上行（440→660 triangle，比过圈 chime 低而钝，音色可区分）
+      save: function () {
+        tone(440, 0, 0.09, 0.14, 'triangle');
+        tone(660, 0.09, 0.12, 0.14, 'triangle');
+      },
+
       // 两音上行
       chime: function () {
         tone(660, 0, 0.12, 0.15, 'sine');
@@ -234,6 +262,9 @@
             engines[k].osc.disconnect();
             engines[k].gain.disconnect();
             engines[k].filter.disconnect();
+            engines[k].warnOsc.stop();
+            engines[k].warnOsc.disconnect();
+            engines[k].warnGain.disconnect();
           } catch (err) { /* 忽略 */ }
         }
         engines = [];

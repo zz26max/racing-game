@@ -129,6 +129,19 @@
     phase = 'countdown';
     pausedFrom = null;
     acc = 0;
+    cdSound = -1;            // 倒计时发声档复位（-1 = 还没响过）
+  }
+
+  // 倒计时声音：3/2/1 各一声低 beep，进 GO 段一声高 beep（与画面数字同一阈值 COUNTDOWN_GO）
+  var cdSound = -1;
+  var COUNTDOWN_GO = 0.8;
+  function countdownSounds() {
+    if (phase !== 'countdown' || !race || !audio) return;
+    var rem = race.countdown - race.t;
+    var stage = rem > COUNTDOWN_GO ? Math.ceil(rem - COUNTDOWN_GO) : 0;
+    if (stage === cdSound) return;
+    cdSound = stage;
+    audio.beep(stage > 0 ? 440 : 990);
   }
 
   // 标题界面切换赛道：重建赛道、2D 底图与 3D 场景（车模/灯光保留）
@@ -276,6 +289,7 @@
     if (uiHit) {
       var pid = (e && e.pointerId !== undefined) ? e.pointerId : 'p';
       pressedPointers[pid] = uiHit;
+      if (audio) audio.click();
       runUIAction(uiHit);
       if (e && e.preventDefault) e.preventDefault();
       return;
@@ -371,12 +385,34 @@
     }
   }
 
-  // 引擎音：速度比例 = speed / 400
+  // 救车反馈：saveWindow（超限且已松油）进入即"武装"，gripUse 回落到 <1 的那一刻
+  // 播放上行音——把"松油救回来了"从纯 HUD 信息变成可感知事件。脱轨则清除武装（boom 已负责）。
+  var saveArmed = [false, false];
+  function saveFeedback() {
+    if (!audio || !race || !race.entries) return;
+    for (var i = 0; i < 2 && i < race.entries.length; i++) {
+      var car = race.entries[i].car;
+      if (!car) { saveArmed[i] = false; continue; }
+      if (car.derailed) { saveArmed[i] = false; continue; }
+      if (car.saveWindow && car.gripUse >= 1) { saveArmed[i] = true; continue; }
+      if (saveArmed[i] && car.gripUse < 1) { audio.save(); saveArmed[i] = false; continue; }
+      if (!car.saveWindow && car.gripUse < 1) saveArmed[i] = false;
+    }
+  }
+
+  function clamp01(v) { var n = Number(v); if (!isFinite(n) || n < 0) return 0; return n > 1 ? 1 : n; }
+
+  // 引擎音：速度比例 = speed / 400；预警量随 gripUse 逼近极限抬升（黄区起步，红区拉满）
   function engineSounds() {
     if (!audio || !race || !race.entries) return;
     for (var i = 0; i < 2 && i < race.entries.length; i++) {
       var car = race.entries[i].car;
-      audio.engine(i, car ? car.speed / 400 : 0);
+      var warn = 0;
+      if (car && !car.derailed) {
+        var gu = Math.max(Number(car.gripUse) || 0, 0);
+        warn = gu <= 0.75 ? 0 : clamp01((gu - 0.75) / 0.75);
+      }
+      audio.engine(i, car ? car.speed / 400 : 0, warn);
     }
   }
 
@@ -392,6 +428,7 @@
       acc -= STEP;
       steps += 1;
       emitEvents(before);
+      saveFeedback();
       if (race.phase === 'finished') break;
     }
     if (steps >= MAX_STEPS) acc = 0;   // 掉帧过多时丢弃余量，防止追赶抖动
@@ -464,6 +501,7 @@
     if (phase === 'paused') { acc = 0; updateDbg(); return; }
     time += dt;
     if (phase === 'countdown' || phase === 'running') step(dt);
+    countdownSounds();
     engineSounds();
     updateDbg();
   }
@@ -537,7 +575,7 @@
       hudCtx.textAlign = 'right';
       hudCtx.textBaseline = 'bottom';
       hudCtx.fillStyle = 'rgba(233,220,196,.45)';
-      hudCtx.fillText('build 10 · ' + trackList.length + ' tracks', W - 8, H - 6);
+      hudCtx.fillText('build 11 · ' + trackList.length + ' tracks', W - 8, H - 6);
       hudCtx.restore();
     } else if (typeof window.RaceRender.drawHUD === 'function') {
       window.RaceRender.drawHUD(hudCtx, state);
