@@ -340,8 +340,8 @@ test('音效：engine 预警参数、click/save/beep 入队，静音时全部静
     const audio = audioMod.createAudio();
     audio.resume();   // ctx 惰性创建（真实浏览器由首次手势触发）；state 桩固定 'running'
 
-    // 引擎 + 摩擦层：双锯齿 + 两条 LFO 振荡器 + 一条循环噪声源
-    audio.engine(0, 0.5, 0.9);
+    // 引擎 + 摩擦层：双锯齿 + 两条 LFO 振荡器 + 一条循环噪声源（第 4 参 = 油门行程）
+    audio.engine(0, 0.5, 0.9, 0.8);
     assert.ok(contOsc >= 4, 'engine 应建立双锯齿+两条LFO共4条持续振荡器，实际 ' + contOsc);
     assert.ok(contNoise >= 1, 'engine 应建立循环噪声源（轮胎摩擦层），实际 ' + contNoise);
 

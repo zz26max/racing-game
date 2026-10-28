@@ -9,11 +9,11 @@
   'use strict';
   var api = {};
 
-  var ENGINE_GAIN = 0.05;   // 引擎增益（固定）
+  var ENGINE_GAIN = 0.038;  // 引擎满油门时的增益上限（实际 = 上限 × 油门量，不踩不响）
   var ENGINE_BASE = 62;     // 引擎基频
   var ENGINE_SPAN = 240;    // 随速度增加的频率跨度
   var ENGINE_DETUNE = 1.007; // 第二锯齿的失谐比（≈12Hz 拍频，加厚）
-  var SCREECH_GAIN = 0.14;  // 轮胎摩擦声峰值增益
+  var SCREECH_GAIN = 0.05;  // 轮胎低噪峰值增益（渐入，不作啸叫）
 
   function getWin() {
     if (typeof window !== 'undefined') return window;
@@ -210,8 +210,8 @@
             var t = ctx.currentTime;
             for (var k in engines) {
               var e = engines[k];
-              e.gain.gain.setTargetAtTime(muted ? 0 : ENGINE_GAIN, t, 0.05);
-              e.lfoDepth.gain.setTargetAtTime(muted ? 0 : 0.014, t, 0.05);
+              e.gain.gain.setTargetAtTime(0, t, 0.05);            // 解除静音后由 engine() 按油门恢复
+              e.lfoDepth.gain.setTargetAtTime(0, t, 0.05);
               e.screechGain.gain.setTargetAtTime(0, t, 0.05);
               e.bpLfoDepth.gain.setTargetAtTime(0, t, 0.05);
             }
@@ -222,26 +222,27 @@
 
       isMuted: function () { return muted; },
 
-      // 引擎音：i 区分玩家，speed01 为 0..1 速度比例；
-      // warn01 为 0..1 打滑预警量（gripUse/slip 越高，轮胎摩擦声越紧），缺省 0
-      engine: function (i, speed01, warn01) {
+      // 引擎音：i 区分玩家；speed01 速度比例；warn01 打滑预警量；throttle01 油门行程
+      // —— 增益 = 上限 × 油门：不踩不响，踩多少响多少（槽车电机感）
+      // —— 轮胎低噪：带宽 850..1500Hz、Q1.1 的"沙沙"层，0.15s 时间常数缓慢渐入，不突兀
+      engine: function (i, speed01, warn01, throttle01) {
         if (silent()) return;
         var slot = ensureEngine(i | 0);
         if (!slot) return;
         try {
           var s = clamp01(speed01);
           var w = clamp01(warn01);
+          var th = clamp01(throttle01);
           var t = ctx.currentTime;
           var freq = ENGINE_BASE + s * ENGINE_SPAN;
           slot.sawA.frequency.setTargetAtTime(freq, t, 0.08);
           slot.sawB.frequency.setTargetAtTime(freq * ENGINE_DETUNE, t, 0.08);
           slot.filter.frequency.setTargetAtTime(380 + s * 1500, t, 0.1);
-          slot.gain.gain.setTargetAtTime(ENGINE_GAIN, t, 0.1);
-          slot.lfoDepth.gain.setTargetAtTime(0.014, t, 0.1);
-          // 轮胎摩擦：越贴极限中心频率越高、越响；带通抖动给出"吱吱嘎嘎"的滚动感
-          slot.bp.frequency.setTargetAtTime(1800 + w * 1600, t, 0.08);
-          slot.bpLfoDepth.gain.setTargetAtTime(320 + w * 160, t, 0.1);
-          slot.screechGain.gain.setTargetAtTime(w * (0.10 + 0.05 * s), t, 0.05);
+          slot.gain.gain.setTargetAtTime(ENGINE_GAIN * th, t, 0.08);
+          slot.lfoDepth.gain.setTargetAtTime(0.01 * th, t, 0.1);
+          slot.bp.frequency.setTargetAtTime(850 + w * 650, t, 0.12);
+          slot.bpLfoDepth.gain.setTargetAtTime(140 + w * 100, t, 0.15);
+          slot.screechGain.gain.setTargetAtTime(w * SCREECH_GAIN, t, 0.15);
         } catch (err) { /* 静默失败 */ }
       },
 

@@ -402,19 +402,25 @@
 
   function clamp01(v) { var n = Number(v); if (!isFinite(n) || n < 0) return 0; return n > 1 ? 1 : n; }
 
-  // 引擎音：速度比例 = speed / 400；预警量随 gripUse 逼近极限抬升（黄区起步，红区拉满）
-  function engineSounds() {
+  // 引擎音：速度比例 = speed / 400；油门行程决定音量（不踩不响）；
+  // 预警量提前到 gripUse 0.55 渐入（黄区前就低声存在），并做非对称平滑
+  // （0.18s 快攻 / 0.4s 慢放）——预警是"渐渐紧张"而不是突然钻出来
+  var warnSm = [0, 0];
+  function engineSounds(dt) {
     if (!audio || !race || !race.entries) return;
     for (var i = 0; i < 2 && i < race.entries.length; i++) {
       var car = race.entries[i].car;
       var warn = 0;
       if (car && !car.derailed) {
         var gu = Math.max(Number(car.gripUse) || 0, 0);
-        var gripWarn = gu <= 0.75 ? 0 : clamp01((gu - 0.75) / 0.75);
-        var slipWarn = clamp01((Number(car.slip) || 0) / 0.85);   // 真实侧滑立刻出声
+        var gripWarn = clamp01((gu - 0.55) / 0.75);
+        var slipWarn = clamp01((Number(car.slip) || 0) / 0.9);
         warn = Math.max(gripWarn, slipWarn);
       }
-      audio.engine(i, car ? car.speed / 400 : 0, warn);
+      // 非对称指数平滑：上升 0.18s、下降 0.4s
+      var tau = warn > warnSm[i] ? 0.18 : 0.4;
+      warnSm[i] += (warn - warnSm[i]) * (1 - Math.exp(-(dt || 0.016) / tau));
+      audio.engine(i, car ? car.speed / 400 : 0, warnSm[i], car ? car.throttle : 0);
     }
   }
 
@@ -504,7 +510,7 @@
     time += dt;
     if (phase === 'countdown' || phase === 'running') step(dt);
     countdownSounds();
-    engineSounds();
+    engineSounds(dt);
     updateDbg();
   }
 
@@ -577,7 +583,7 @@
       hudCtx.textAlign = 'right';
       hudCtx.textBaseline = 'bottom';
       hudCtx.fillStyle = 'rgba(233,220,196,.45)';
-      hudCtx.fillText('build 11 · ' + trackList.length + ' tracks', W - 8, H - 6);
+      hudCtx.fillText('build 12 · ' + trackList.length + ' tracks', W - 8, H - 6);
       hudCtx.restore();
     } else if (typeof window.RaceRender.drawHUD === 'function') {
       window.RaceRender.drawHUD(hudCtx, state);
