@@ -167,22 +167,30 @@ console.log('RaceTrack:', typeof windowStub.RaceTrack, '| RaceGL:', typeof windo
   '| RaceRender:', typeof windowStub.RaceRender, '| RaceCar:', typeof windowStub.RaceCar);
 console.log('trackId/main 状态: 见流程输出');
 
-// ---- 流程 0：点击右箭头切赛道 ----
+// ---- 流程 0：点击右箭头切赛道（标题改版后箭头位置动态扫描）----
 runFrames(1);   // 先让标题画一帧，drawTitle 会记录箭头命中框
-let hitX = -1;
-for (let x = 700; x <= 1200; x += 4) {
-  if (windowStub.RaceRender.hitTestTitleArrow(x, 368) === 'right') { hitX = x; break; }
+let hitX = -1, hitY = -1;
+for (let y = 290; y <= 420 && hitX < 0; y += 4) {
+  for (let x = 600; x <= 1200; x += 4) {
+    if (windowStub.RaceRender.hitTestTitleArrow(x, y) === 'right') { hitX = x; hitY = y; break; }
+  }
 }
 if (hitX < 0) { console.log('  ✗ 未在标题里找到右箭头命中区（hitTestTitleArrow 全返回 null）'); process.exit(1); }
-clickPage(hitX, 368);
+clickPage(hitX, hitY);
 runFrames(2);
-console.log('[click] 右箭头 x=' + hitX + ' → slotrace.track =', store['slotrace.track']);
+console.log('[click] 右箭头 (' + hitX + ',' + hitY + ') → slotrace.track =', store['slotrace.track']);
 if (store['slotrace.track'] !== 'attic') { console.log('  ✗ 点击切换赛道失败'); process.exit(1); }
 
-// ---- 流程 0b：整行半平面点击（名称右侧、非箭头精确框内）----
-clickPage(900, 368);
+// ---- 流程 0b：整行半平面点击（非箭头精确框、行命中返回 'right' 的点）----
+let rowX = -1;
+for (let x = 600; x <= 1250 && rowX < 0; x += 2) {
+  if (!windowStub.RaceRender.hitTestTitleArrow(x, hitY) &&
+      windowStub.RaceRender.hitTestTitleRow(x, hitY) === 'right') { rowX = x; }
+}
+if (rowX < 0) { console.log('  ✗ 未找到整行命中的右半平面点'); process.exit(1); }
+clickPage(rowX, hitY);
 runFrames(2);
-console.log('[row-click] (900,368) →', store['slotrace.track']);
+console.log('[row-click] (' + (hitX + 108) + ',' + hitY + ') →', store['slotrace.track']);
 if (store['slotrace.track'] !== 'figure8') {
   console.log('  ✗ 整行点击切换赛道失败，期望 figure8，实际 =', store['slotrace.track']);
   process.exit(1);
@@ -329,6 +337,21 @@ if (store['slotrace.muted'] !== '0' || windowStub.__DBG__.muted !== false) {
 dispatchPointer('pointerup', 1233, 42, { pointerId: 8 });
 runFrames(4);
 console.log('[ui-unmute] 恢复有声 ✓');
+
+// 4b2：标题上的「开始比赛」按钮直接开赛
+dispatchPointer('pointerdown', 640, 536, { pointerId: 14 });   // 开始按钮 (500..780, 508..564)
+runFrames(8);
+const phase4b2 = windowStub.__DBG__.phase;
+if (phase4b2 !== 'countdown' && phase4b2 !== 'running') {
+  console.log('  ✗ 点开始按钮应开赛，phase =', phase4b2); process.exit(1);
+}
+dispatchPointer('pointerup', 640, 536, { pointerId: 14 });
+runFrames(2);
+console.log('[ui-start] 开始比赛按钮 → ' + phase4b2 + ' ✓');
+pressKey('Escape'); runFrames(8);
+if (windowStub.__DBG__.phase !== 'title') {
+  console.log('  ✗ Esc 应回标题，phase =', windowStub.__DBG__.phase); process.exit(1);
+}
 
 // 4c：开赛 → 点暂停芯片 → paused，且不注入半屏油门
 dispatchPointer('pointerdown', 100, 600, { pointerId: 9 });

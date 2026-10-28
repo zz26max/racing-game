@@ -201,6 +201,7 @@
 
   function runUIAction(id) {
     if (id === 'pause' || id === 'resume') togglePause();
+    else if (id === 'start') { if (phase === 'title' || phase === 'finished') startRace(); }
     else if (id === 'restart' || id === 'again') startRace();
     else if (id === 'back') backToTitle();
     else if (id === 'mute') toggleMute();
@@ -536,7 +537,7 @@
       hudCtx.textAlign = 'right';
       hudCtx.textBaseline = 'bottom';
       hudCtx.fillStyle = 'rgba(233,220,196,.45)';
-      hudCtx.fillText('build 9 · ' + trackList.length + ' tracks', W - 8, H - 6);
+      hudCtx.fillText('build 10 · ' + trackList.length + ' tracks', W - 8, H - 6);
       hudCtx.restore();
     } else if (typeof window.RaceRender.drawHUD === 'function') {
       window.RaceRender.drawHUD(hudCtx, state);

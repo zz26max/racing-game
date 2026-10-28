@@ -288,6 +288,7 @@ test('UI：各阶段芯片注册命中区，触控目标 ≥44 且不与油门�
   // 标题阶段：右上角静音芯片；油门区（下半屏）不应注册任何按钮
   R.drawTitle(ctx, { phase: 'title', time: 0, trackName: '阁楼复刻', trackDesc: '', trackCount: 2, muted: false, pressed: [] });
   assert.equal(R.hitTestUI(1233, 42), 'mute', '标题静音芯片应命中');
+  assert.equal(R.hitTestUI(640, 536), 'start', '开始比赛按钮应命中');
   assert.equal(R.hitTestUI(100, 600), null, '标题下半屏（点按开始区）不应注册按钮');
 
   // 竖屏遮罩：portrait 时全屏可点，且优先于其他按钮（最后注册 = 最上层）

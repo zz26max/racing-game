@@ -815,7 +815,137 @@
     registerUI('portraitDismiss', 0, 0, W, H);
   }
 
-  // 标题界面：压暗底图 + 标题 / 副标题 / 操作提示 / 呼吸闪烁的开始提示
+  // 键帽：圆角小块 + 墨描边（桌游棋子感）；返回宽度
+  function drawKeycap(ctx, cx, cy, label, fs) {
+    var w = textWidth(ctx, label, fs) + 14;
+    var h = fs + 10;
+    roundRectPath(ctx, cx - w / 2, cy - h / 2, w, h, 5);
+    ctx.fillStyle = 'rgba(233,220,196,.92)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(43,35,32,.8)';
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    setFont(ctx, 'bold', fs);
+    ctx.fillStyle = COL.ink;
+    ctx.fillText(label, cx, cy + 0.5);
+    return w;
+  }
+
+  // 键帽行：parts = {k:'键'} 键帽 / {t:'文字'} 素文本 / {g:像素} 加大间距；整行按 cx 居中
+  function drawKeyRow(ctx, cx, y, parts, fs) {
+    var GAP = 8;
+    var widths = [];
+    var total = 0;
+    var i, w;
+    for (i = 0; i < parts.length; i++) {
+      var pt = parts[i];
+      if (pt.g) { w = pt.g; }
+      else if (pt.k) { w = textWidth(ctx, pt.k, fs) + 14; }
+      else { w = textWidth(ctx, pt.t, fs); }
+      widths.push(w);
+      total += w + (i < parts.length - 1 ? GAP : 0);
+    }
+    var x = cx - total / 2;
+    for (i = 0; i < parts.length; i++) {
+      var p2 = parts[i];
+      if (p2.g) { x += widths[i] + GAP; continue; }
+      if (p2.k) {
+        drawKeycap(ctx, x + widths[i] / 2, y, p2.k, fs);
+      } else {
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        setFont(ctx, 'normal', fs);
+        ctx.fillStyle = 'rgba(233,220,196,.72)';
+        ctx.fillText(p2.t, x, y + 0.5);
+      }
+      x += widths[i] + GAP;
+    }
+  }
+
+  // 赛道预览：毯红底小卡 + 缩放路基带 + 起点双白线（对照 2D 场景的赛道画法）
+  function drawTrackPreview(ctx, x, y, w, h, track) {
+    roundRectPath(ctx, x + 3, y + 3, w, h, 14);
+    ctx.fillStyle = 'rgba(43,35,32,.25)';
+    ctx.fill();
+    roundRectPath(ctx, x, y, w, h, 14);
+    ctx.fillStyle = '#7A3E3A';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = COL.ink;
+    ctx.stroke();
+
+    var pts = track && track.points;
+    if (!pts || pts.length < 2) return;
+
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      var q = pts[i];
+      if (q.x < minX) minX = q.x;
+      if (q.x > maxX) maxX = q.x;
+      if (q.y < minY) minY = q.y;
+      if (q.y > maxY) maxY = q.y;
+    }
+    var PAD = 26;
+    var sx = (w - PAD * 2) / Math.max(1, maxX - minX);
+    var sy = (h - PAD * 2) / Math.max(1, maxY - minY);
+    var sc = Math.min(sx, sy);
+    var ox = x + w / 2 - (minX + maxX) / 2 * sc;
+    var oy = y + h / 2 - (minY + maxY) / 2 * sc;
+
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(sc, sc);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = COL.ink;
+    ctx.lineWidth = 84 + 6;          // 外描边（路基 84 + 描边 6，同 scene.js）
+    ctx.stroke();
+    ctx.strokeStyle = '#3A3F47';
+    ctx.lineWidth = 84;
+    ctx.stroke();
+    ctx.restore();
+
+    // 起点双白线（起跑线样式）
+    var st = track.startLine;
+    if (st) {
+      ctx.save();
+      ctx.translate(st.x * sc + ox, st.y * sc + oy);
+      ctx.rotate(st.angle || 0);
+      ctx.fillStyle = '#FFFFFF';
+      var half = 84 * sc / 2;
+      ctx.fillRect(-2.5, -half - 2.5, 5, 8);
+      ctx.fillRect(-2.5, half - 5.5, 5, 8);
+      ctx.restore();
+    }
+  }
+
+  // 统计小卡：标签 + 数值（纸卡上的凹槽面）
+  function drawStatCard(ctx, x, y, w, h, label, value) {
+    roundRectPath(ctx, x, y, w, h, 10);
+    ctx.fillStyle = 'rgba(43,35,32,.07)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(43,35,32,.55)';
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    setFont(ctx, 'normal', 11);
+    ctx.fillStyle = 'rgba(43,35,32,.6)';
+    ctx.fillText(label, x + w / 2, y + 17);
+    setFont(ctx, 'bold', 19);
+    ctx.fillStyle = COL.ink;
+    ctx.fillText(value, x + w / 2, y + 42);
+  }
+
+  // 标题界面（桌游纸卡）：
+  //   左列赛道预览 + 右列选择器/统计，主操作「开始比赛」为第一层级，
+  //   键位提示压成卡下方的键帽行（调研：主操作突出、预览是选图核心、次级信息靠边）
   function drawTitle(ctx, s) {
     if (!ctx || !s) return;
     var t = Number(s.time) || 0;
@@ -828,8 +958,8 @@
     ctx.fillStyle = DIM_TITLE;
     ctx.fillRect(0, 0, W, H);
 
-    // 纸卡：760×330 居中，避免标题压在赛道上
-    var cardX = 260, cardY = 150, cardW = 760, cardH = 330;
+    // 纸卡 900×470 居中
+    var cardX = 190, cardY = 125, cardW = 900, cardH = 470;
     roundRectPath(ctx, cardX + 4, cardY + 4, cardW, cardH, 16);
     ctx.fillStyle = 'rgba(43,35,32,.25)';
     ctx.fill();
@@ -843,58 +973,72 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    setFont(ctx, 'bold', 88);
+    // 标题锁定（视觉锚点）
+    setFont(ctx, 'bold', 76);
     ctx.fillStyle = COL.ink;
-    ctx.fillText('轨道赛车', W / 2, 268);
+    ctx.fillText('轨道赛车', W / 2, 206);
+    setFont(ctx, 'normal', 15);
+    ctx.fillStyle = 'rgba(43,35,32,.7)';
+    ctx.fillText('《双人成行》阁楼小游戏 · 程序化复刻', W / 2, 254);
 
-    setFont(ctx, 'normal', 24);
-    ctx.fillStyle = 'rgba(43,35,32,.75)';
-    ctx.fillText('《双人成行》阁楼小游戏 · 程序化复刻', W / 2, 330);
+    // 左列：赛道预览（选择赛道的核心信息）
+    drawTrackPreview(ctx, 250, 288, 330, 196, s.track);
 
-    // 赛道选择器：◀  名称  ▶（方向键 / A·D / 点击箭头切换，localStorage 记忆）
+    // 右列：选择器 ◀ 名称 ▶（方向键 / A·D / 点击切换，localStorage 记忆）
     var trackCount = Number(s.trackCount) || 0;
+    var colCx = 815;
     if (trackCount > 1) {
-      setFont(ctx, 'bold', 20);
-      ctx.fillStyle = COL.ink;
       var name = String(s.trackName || '');
-      var arrowLW = textWidth(ctx, '◀', 20);
-      var arrowRW = textWidth(ctx, '▶', 20);
-      var nameW = textWidth(ctx, name, 20);
-      var gap = 28;                                  // 箭头与名称的间距
-      var baseY = 368;
-      var startX = W / 2 - (arrowLW + gap + nameW + gap + arrowRW) / 2;
+      var arrowFs = 30, nameFs = 26, gap = 26;
+      setFont(ctx, 'bold', nameFs);
+      var nameW = textWidth(ctx, name, nameFs);
+      var arrowLW = textWidth(ctx, '◀', arrowFs);
+      var arrowRW = textWidth(ctx, '▶', arrowFs);
+      var totalW = arrowLW + gap + nameW + gap + arrowRW;
+      var startX = colCx - totalW / 2;
       var leftCx = startX + arrowLW / 2;
       var nameCx = startX + arrowLW + gap + nameW / 2;
       var rightCx = startX + arrowLW + gap + nameW + gap + arrowRW / 2;
+      var baseY = 330;
+      ctx.fillStyle = COL.ink;
+      setFont(ctx, 'bold', arrowFs);
       ctx.fillText('◀', leftCx, baseY);
+      setFont(ctx, 'bold', nameFs);
       ctx.fillText(name, nameCx, baseY);
+      setFont(ctx, 'bold', arrowFs);
       ctx.fillText('▶', rightCx, baseY);
       setArrowHit('left', leftCx, baseY);
       setArrowHit('right', rightCx, baseY);
-      // 整行命中：名称左右边缘各外扩 60px，并放宽到纸卡横向范围（侧边栏缩放后整行都好点）
+      // 整行命中：限制在选择器附近（左侧是预览卡，不参与切赛道）
       titleRowHit = {
         baseY: baseY,
         nameCx: nameCx,
-        minX: Math.min(nameCx - nameW / 2 - TITLE_ROW_PAD_X, cardX),
-        maxX: Math.max(nameCx + nameW / 2 + TITLE_ROW_PAD_X, cardX + cardW),
+        minX: leftCx - 64,
+        maxX: rightCx + 64,
         trackCount: trackCount
       };
-      setFont(ctx, 'normal', 13);
-      ctx.fillStyle = 'rgba(43,35,32,.6)';
-      ctx.fillText(s.trackDesc || '', W / 2, 392);
+      setFont(ctx, 'normal', 14);
+      ctx.fillStyle = 'rgba(43,35,32,.65)';
+      ctx.fillText(s.trackDesc || '', colCx, 372);
     }
 
-    setFont(ctx, 'normal', 17);
-    ctx.fillStyle = COL.ink;
-    ctx.fillText('P1：W / 空格　P2：↑ / Enter　·　手机：按住左右半屏加速', W / 2, 420);
-    ctx.fillText((trackCount > 1 ? '←/→ 或 A/D 或点击箭头切赛道　' : '') + 'P 暂停　M 静音　R 重开', W / 2, 446);
+    // 统计小卡：总长 / 弯道 / 存档最佳圈
+    var track = s.track || null;
+    var bestTxt = (s.best !== null && s.best !== undefined && isFinite(Number(s.best)))
+      ? fmtLap(Number(s.best) / 1000) : '—';
+    drawStatCard(ctx, 620, 400, 118, 64, '总长 px', track ? String(Math.round(track.totalLength)) : '—');
+    drawStatCard(ctx, 756, 400, 118, 64, '弯道', track && track.corners ? String(track.corners.length) : '—');
+    drawStatCard(ctx, 892, 400, 118, 64, '存档最佳圈', bestTxt);
 
-    // 1Hz 呼吸闪烁（0.45~1，纸卡上不用金色）
-    setFont(ctx, 'bold', 22);
-    ctx.fillStyle = COL.ink;
-    ctx.globalAlpha = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
-    ctx.fillText('点击 / 点按任意处开始', W / 2, 470);
-    ctx.globalAlpha = 1;
+    // 主操作：开始比赛（第一层级，Enter / 点按任意处同义）
+    drawChip(ctx, {
+      id: 'start', x: W / 2 - 140, y: 508, w: 280, h: 56,
+      label: '开始比赛', face: 'wood', pressed: isPressed(s, 'start')
+    });
+    registerUI('start', W / 2 - 140, 508, 280, 56);
+    setFont(ctx, 'normal', 12);
+    ctx.fillStyle = 'rgba(43,35,32,.55)';
+    ctx.fillText('按 Enter 或点按画面任意处同样开始', W / 2, 584);
 
     // 右上角静音芯片（M 键同义；命中先于「点按任意处开始」，见 main.onPointerDown）
     drawChip(ctx, {
@@ -902,6 +1046,17 @@
       icon: 'sound', iconOn: !s.muted, face: 'paper', pressed: isPressed(s, 'mute')
     });
     registerUI('mute', W - 24 - CHIP_W, 20, CHIP_W, CHIP_H);
+
+    // 卡下方键帽行（次级信息）
+    drawKeyRow(ctx, W / 2, 624, [
+      { t: 'P1 ' }, { k: 'W' }, { t: ' 或 ' }, { k: '空格' }, { g: 16 },
+      { t: 'P2 ' }, { k: '↑' }, { t: ' 或 ' }, { k: 'Enter' }, { g: 16 },
+      { t: '手机：按住左右半屏加速' }
+    ], 13);
+    drawKeyRow(ctx, W / 2, 656, [
+      { k: '←' }, { k: '→' }, { t: ' 或 A/D 切赛道' }, { g: 16 },
+      { k: 'P' }, { t: '暂停' }, { g: 10 }, { k: 'M' }, { t: '静音' }, { g: 10 }, { k: 'R' }, { t: '重开' }
+    ], 13);
 
     if (s.portrait) drawPortraitHint(ctx, s);
     ctx.restore();

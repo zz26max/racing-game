@@ -421,3 +421,36 @@
 - 结算页按钮在真机/实机上只被 boot-sim 的逻辑断言覆盖（快速到 finished 需 ?ff，boot-sim
   单页沙箱没法二次加载；race.test 用例 10 已覆盖注册与命中）。
 - 3D 实机观感（纸卡芯片叠在 3D 画面上的层次、阴影观感）仍需人工看一眼。
+
+## 2026-10-28 第十一轮：开始界面改版（赛道预览 + 主操作按钮 + 键帽行）
+
+### 参考（联网调研）
+- Game UI Database 的通用模式：主操作（开始/继续）放第一层级最显眼处，标题是视觉锚点，
+  次要选项下沉；racing UI 的赛道选择通行模式是「大预览图 + 名称/统计卡」
+  （[Game UI Database](https://www.gameuidatabase.com)、[A Brief Guide to UI in Video Games](https://uiux.studio/blog/game-ui-design-guide)、
+  [rally track select 参考](https://in.pinterest.com/pin/289637819760451512)、[race UI 集合](https://www.pinterest.com/dragonmen/race-ui)）。
+- 同类型顶视玩具赛车 Circuit Superstars 证明「玩具感 + 干净菜单」成立。
+
+### 改版内容（仍走桌游纸卡语言）
+- 纸卡 760×330 → 900×470：左列 330×196 **赛道预览缩略图**（毯红底 + 墨描边 + 缩放路基带
+  + 起点双白线，从 track.points 实时缩放，两条赛道形状一眼可辨）；右列选择器 ◀名称▶（字号加大）
+  + 三张统计小卡（总长 px / 弯道数 / 存档最佳圈）。
+- 主操作：木色「开始比赛」280×56 大按钮（registerUI 'start'），`Enter` 与点按任意处仍是同义路径；
+  原呼吸闪烁文本删除。
+- 键位提示压成卡下方两行**键帽行**（drawKeyRow / drawKeycap，圆角小块 + 墨描边），
+  不再与标题/选择器抢层级；静音芯片位置不变（右上角 1210..1256, 20..64）。
+- 选择器整行命中收窄到选择器附近（leftCx-64 .. rightCx+64）：左侧现在是预览卡，
+  整行命中不再横向铺满卡片，避免误触语义混乱。
+
+### 连带修正
+- `_boot-sim` 流程 0/0b 原来写死 `(x,368)` 扫描与 `(900,368)` 整行点击——布局改版后全失效。
+  改为动态扫描：先在 y∈[290,420] 扫右箭头命中框，再扫「非箭头框但行命中返回 right」的点。
+  过程中定位到一个测试脆弱性：流程 0b 原来用 `hitX+108`，该偏移对 5 字赛道名恰好落在行内、
+  对 4 字名就出界（行 maxX = rightCx+64，随名称宽度变化）——动态扫描后与布局解耦。
+- main.js `runUIAction` 增加 'start' 分支（title/finished 才生效）；build 标记 → 10。
+- race.test 用例 10 增加开始按钮命中断言（640,536 → 'start'）。
+- 脚本版本 ?v=9 → ?v=10。
+
+### 验证
+- `node --test test/race.test.js` 10/10；`_boot-sim` 全流程（含新的 [ui-start]）通过；
+  `_gl-smoke` 两赛道通过。
