@@ -147,23 +147,17 @@
 
   // 立体交叉装饰：桥面两侧黄色护栏（含引桥段）+ 桥墩 + 桥下投影
   var RAIL_COLOR = 0xf2b544;
-  var RAIL_S0 = -70;      // 桥面弧长范围默认值（track.bridge.railSpan 可覆盖）
-  var RAIL_S1 = 70;
+  var RAIL_SPAN = 70;     // 护栏沿弧长半跨度默认值（track.bridge.railSpan 可覆盖）
   var RAIL_STEP = 5;      // 每 5px 一根
   var RAIL_GAP = 2;       // 护栏离路面边缘的横向间隙
   var RAIL_H = 16;        // 桥面黄护栏高度：独立于普通护栏 WALL_H，保持 16 不变
-  var RAIL_DEPTH_PAD = 1; // 立方体沿走向略加长，弯道上相邻块不留缝
 
   var PIER_COLOR = 0x8c96a3;
-  var PIER_S0 = -180;     // 桥墩弧长范围默认值（随 railSpan 扩展）
-  var PIER_S1 = 180;
   var PIER_STEP = 60;
   var PIER_RADIUS = 4;
   var PIER_SEGMENTS = 10;
 
-  var BRIDGE_SHADOW_W = 200;
-  var BRIDGE_SHADOW_D = 140;
-  var BRIDGE_SHADOW_Y = 0.75;
+  var BRIDGE_SHADOW_Y = 0.75;   // 桥下暗带离地高度（低于路面 SURFACE_Y，压在地板上）
   var BRIDGE_SHADOW_OPACITY = 0.28;
 
   // 起跑线：84×24 平面 + 2 列 × 3 行、每格 12px 的黑白格贴图
@@ -471,68 +465,97 @@
     return meshes;
   }
 
-  // 立体交叉装饰：桥面两侧黄色护栏（s ∈ [-70,70] 每 5px 一根立方体，沿赛道走向）、
-  // 桥墩（s ∈ [-180,180] 每 60px 左右各一根，从地面顶到该处赛道高度）、桥下地面投影
+  // 立体交叉装饰：桥面两侧黄色护栏（以 sCenter 为中心，跨度 railSpan）、
+  // 桥墩（从地面顶到该处赛道高度）、桥下暗带
   function buildBridge(track) {
     if (!track || typeof track.sampleAt !== 'function') return null;
     var halfW = (Number(track.width) || 0) / 2;
     var railOff = halfW + RAIL_GAP;
     var group = new THREE.Group();
     var sides = [1, -1];
-    var si, s, p, off, mesh, h;
+    var si, s, p, mesh, h;
+    var total = Number(track.totalLength) || 0;
 
+    // 桥面弧长中心：护栏与桥墩都相对它布置（8 字环道 sCenter=0，阁楼赛道在顶直道上）
+    var sc = (track.bridge && isFinite(Number(track.bridge.sCenter))) ? Number(track.bridge.sCenter) : 0;
     // 护栏跨度：track.bridge.railSpan 可覆盖（阁楼赛道的护栏覆盖平段+大部分引桥）
-    var railS0 = (track.bridge && isFinite(Number(track.bridge.railSpan))) ? -Number(track.bridge.railSpan) : RAIL_S0;
-    var railS1 = (track.bridge && isFinite(Number(track.bridge.railSpan))) ? Number(track.bridge.railSpan) : RAIL_S1;
+    var span = (track.bridge && isFinite(Number(track.bridge.railSpan))) ? Number(track.bridge.railSpan) : RAIL_SPAN;
+    var railS0 = sc - span;
+    var railS1 = sc + span;
 
-    var railGeo = new THREE.BoxGeometry(WALL_THICK, RAIL_H, RAIL_STEP + RAIL_DEPTH_PAD);
     var railMat = new THREE.MeshStandardMaterial({ color: RAIL_COLOR, roughness: 0.55, metalness: 0 });
     var pierMat = new THREE.MeshStandardMaterial({ color: PIER_COLOR, roughness: 0.8, metalness: 0 });
 
-    // 护栏：贴着桥面两侧，底面随该处赛道高度抬升，Y 轴转到赛道走向
-    for (si = 0; si < sides.length; si++) {
-      for (s = railS0; s <= railS1; s += RAIL_STEP) {
-        p = track.sampleAt(s);
-        off = railOff * sides[si];
-        mesh = new THREE.Mesh(railGeo, railMat);
-        mesh.position.set(
-          p.x - p.ty * off,
-          SURFACE_Y + elev(track, s) + RAIL_H / 2,
-          p.y + p.tx * off
-        );
-        // 立方体长边为局部 Z：rotation.y = atan2(tx, ty) 后局部 +Z 指向 (tx, ty)
-        mesh.rotation.y = Math.atan2(p.tx, p.ty);
-        mesh.castShadow = true;
-        group.add(mesh);
+    // 护栏：连续条带（内侧立面 + 顶面 + 外侧立面），底面随桥面抬高。
+    // 逐段摆立方体在弯道上会沿外沿拉开缝隙，改四边形条带后始终闭合。
+    var railList = samplesAlong(track, railS0, railS1, RAIL_STEP);
+    var railOuter = railOff + WALL_THICK;
+    function railBottom(q) { return SURFACE_Y + elev(track, q.s); }
+    function railTop(q) { return railBottom(q) + RAIL_H; }
+
+    if (railList.length >= 2) {
+      for (si = 0; si < sides.length; si++) {
+        var rpos = [], ridx = [];
+        var sd = sides[si];
+        pushQuadStrip(rpos, ridx, railList, sd * railOff, railBottom, sd * railOff, railTop, false, sd > 0);
+        pushQuadStrip(rpos, ridx, railList, sd * railOff, railTop, sd * railOuter, railTop, false, sd > 0);
+        pushQuadStrip(rpos, ridx, railList, sd * railOuter, railBottom, sd * railOuter, railTop, false, sd < 0);
+        var rgeo = new THREE.BufferGeometry();
+        rgeo.setAttribute('position', new THREE.Float32BufferAttribute(rpos, 3));
+        rgeo.setIndex(ridx);
+        rgeo.computeVertexNormals();
+        var rmesh = new THREE.Mesh(rgeo, railMat);
+        rmesh.castShadow = true;
+        rmesh.receiveShadow = true;
+        group.add(rmesh);
       }
     }
 
-    // 桥墩：站在地面（y=0）上，高 = 该处赛道高度，落在路面边缘正下方（范围随护栏跨度扩展）
+    // 桥墩落在路面边缘正下方；若该点压在"别的路段"的路基上就跳过，
+    // 否则桥墩会从下层路面里长出来（阁楼赛道的桥下穿越点）
+    function pierHitsOtherRoad(px, pz) {
+      if (!(total > 0)) return false;
+      var lim = halfW + PIER_RADIUS + 2;
+      for (var ss = 0; ss < total; ss += 8) {
+        var d = Math.abs(((ss - sc) % total + total) % total);
+        if (d > total / 2) d = total - d;
+        var ramp = (track.bridge && isFinite(Number(track.bridge.rampHalf))) ? Number(track.bridge.rampHalf) : 280;
+        if (d <= ramp + 40) continue;                 // 属于本桥自身
+        var q = track.sampleAt(ss);
+        var qx = q.x, qz = q.y;
+        if ((px - qx) * (px - qx) + (pz - qz) * (pz - qz) < lim * lim) return true;
+      }
+      return false;
+    }
+
     for (si = 0; si < sides.length; si++) {
       for (s = railS0 - 40; s <= railS1 + 40; s += PIER_STEP) {
         h = elev(track, s);
         if (!(h > 0)) continue;   // 平地处不立墩
         p = track.sampleAt(s);
         off = halfW * sides[si];
+        var px = p.x - p.ty * off, pz = p.y + p.tx * off;
+        if (pierHitsOtherRoad(px, pz)) continue;
         mesh = new THREE.Mesh(new THREE.CylinderGeometry(PIER_RADIUS, PIER_RADIUS, h, PIER_SEGMENTS), pierMat);
-        mesh.position.set(p.x - p.ty * off, h / 2, p.y + p.tx * off);
+        mesh.position.set(px, h / 2, pz);
         mesh.castShadow = true;
         group.add(mesh);
       }
     }
 
-    // 桥下投影：一块固定尺寸的半透明黑面，压住桥体正下方的地面
+    // 桥下投影：沿平段铺一条半透明暗带，压住桥体正下方的地面
+    var shadows = samplesAlong(track, sc - (track.bridge ? Number(track.bridge.halfLength) || 0 : 0) - 20,
+      sc + (track.bridge ? Number(track.bridge.halfLength) || 0 : 0) + 20, 10);
     var shadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(BRIDGE_SHADOW_W, BRIDGE_SHADOW_D),
+      makeRibbonGeometry(shadows, halfW + 12, BRIDGE_SHADOW_Y),
       new THREE.MeshBasicMaterial({
         color: 0x000000,
         transparent: true,
         opacity: BRIDGE_SHADOW_OPACITY,
-        depthWrite: false
+        depthWrite: false,
+        side: THREE.DoubleSide
       })
     );
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.position.set(0, BRIDGE_SHADOW_Y, 0);
     shadow.receiveShadow = true;
     group.add(shadow);
 
