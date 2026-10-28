@@ -54,6 +54,40 @@
   var TITLE_ROW_HALF_H = 44;   // 选择器基线上下各 44px 内算命中整行
   var TITLE_ROW_PAD_X = 60;    // 名称左右边缘各外扩 60px（再放宽到纸卡横向范围，见 drawTitle）
 
+  // ---- 桌游纸卡 UI 令牌（风格 A：奶油纸卡片 + 墨色描边 + 实色硬投影）----
+  // 触控目标 ≥44 逻辑像素（Apple HIG 44pt / Material 48dp）；可视图形可以比命中区小
+  var CHIP_H = 44;           // 芯片高（触控下限）
+  var CHIP_W = 46;           // 图标芯片宽
+  var CHIP_R = 12;           // 芯片圆角
+  var CHIP_BORDER = 2.5;     // 墨色描边宽
+  var CHIP_DROP = 4;         // 硬投影偏移（按下时视觉间隙收成 1px）
+  var UI_SHADOW = 'rgba(43,35,32,.35)';
+  var UI_WOOD = '#C98B55';       // 主操作芯片面（木色）
+  var UI_WOOD_PRESS = '#A9743C'; // 按下时木色加深
+  var UI_PAPER = 'rgba(233,220,196,.96)';
+  var CHIP_ROW_Y = 24;       // 比赛阶段芯片行（与玩家面板同排）
+  var CHIP_PAUSE_X = 828;    // 暂停芯片：828..874（中上计时与 P2 面板之间）
+  var CHIP_MUTE_X = 884;     // 静音芯片：884..930（距 P2 面板 38px）
+
+  // 屏上按钮命中注册：每帧由 drawTitle / drawHUD 重建，检测时从最上层（最后注册）往回找
+  var uiHits = [];
+  function uiBeginFrame() { uiHits.length = 0; }
+  function registerUI(id, x, y, w, h) { uiHits.push({ id: id, x: x, y: y, w: w, h: h }); }
+  // 逻辑坐标命中测试：命中返回按钮 id（'pause'/'mute'/'resume'/…），否则 null
+  function hitTestUI(x, y) {
+    var px = Number(x), py = Number(y);
+    if (!isFinite(px) || !isFinite(py)) return null;
+    for (var i = uiHits.length - 1; i >= 0; i--) {
+      var b = uiHits[i];
+      if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return b.id;
+    }
+    return null;
+  }
+  // 快照里的按下集合（pointerId → 按钮 id 归并去重）里是否含某按钮
+  function isPressed(s, id) {
+    return !!(s && s.pressed && s.pressed.indexOf(id) >= 0);
+  }
+
   var COL = {
     ink: '#2B2320',
     seat: '#3A4A57',
@@ -200,6 +234,139 @@
     }
   }
 
+  // ---- 桌游纸卡按钮 ----
+  // 芯片：实色硬投影（无模糊）+ 墨描边圆角面；按下时整体下沉 3px、投影间隙收成 1px，
+  // 像按下一块积木。btn = { id, x, y, w, h, label, icon, iconOn, face, pressed }
+  // face：'wood' 主操作（木色面 + 纸色字），'paper' 次操作（纸面 + 墨字）
+  function drawChip(ctx, btn) {
+    var press = btn.pressed ? 1 : 0;
+    var y = btn.y + press * (CHIP_DROP - 1);
+    var textColor = btn.face === 'wood' ? COL.text : COL.ink;
+
+    // 硬投影：贴着原始位置，不随下沉移动（间隙收窄即"按下去"）
+    roundRectPath(ctx, btn.x + 2, btn.y + CHIP_DROP, btn.w, btn.h, CHIP_R);
+    ctx.fillStyle = UI_SHADOW;
+    ctx.fill();
+
+    roundRectPath(ctx, btn.x, y, btn.w, btn.h, CHIP_R);
+    ctx.fillStyle = btn.face === 'wood' ? (press ? UI_WOOD_PRESS : UI_WOOD) : UI_PAPER;
+    ctx.fill();
+    ctx.lineWidth = CHIP_BORDER;
+    ctx.strokeStyle = COL.ink;
+    ctx.stroke();
+
+    var cx = btn.x + btn.w / 2, cy = y + btn.h / 2;
+    if (btn.icon === 'pause') drawPauseIcon(ctx, cx, cy, textColor);
+    else if (btn.icon === 'sound') drawSoundIcon(ctx, cx, cy, btn.iconOn === false, textColor);
+    if (btn.label) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      setFont(ctx, 'bold', 20);
+      ctx.fillStyle = textColor;
+      ctx.fillText(btn.label, cx, cy + 1);
+    }
+  }
+
+  // 暂停图标：两根圆头竖条
+  function drawPauseIcon(ctx, cx, cy, color) {
+    ctx.fillStyle = color;
+    roundRectPath(ctx, cx - 9, cy - 8, 6, 16, 3);
+    ctx.fill();
+    roundRectPath(ctx, cx + 3, cy - 8, 6, 16, 3);
+    ctx.fill();
+  }
+
+  // 喇叭图标：纸卡线条风；muted 时画斜杠，否则两道弧
+  function drawSoundIcon(ctx, cx, cy, muted, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, cy - 4);
+    ctx.lineTo(cx - 4, cy - 4);
+    ctx.lineTo(cx + 2, cy - 10);
+    ctx.lineTo(cx + 2, cy + 10);
+    ctx.lineTo(cx - 4, cy + 4);
+    ctx.lineTo(cx - 10, cy + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    if (muted) {
+      ctx.beginPath();
+      ctx.moveTo(cx + 6, cy - 6);
+      ctx.lineTo(cx + 14, cy + 6);
+      ctx.moveTo(cx + 14, cy - 6);
+      ctx.lineTo(cx + 6, cy + 6);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx + 3, cy, 5.5, -0.9, 0.9);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx + 3, cy, 9.5, -0.8, 0.8);
+      ctx.stroke();
+    }
+  }
+
+  // 比赛阶段右上芯片组：暂停 + 静音（先于半屏油门消费点击，见 main.onPointerDown）
+  function drawRaceChips(ctx, s) {
+    drawChip(ctx, {
+      id: 'pause', x: CHIP_PAUSE_X, y: CHIP_ROW_Y, w: CHIP_W, h: CHIP_H,
+      icon: 'pause', face: 'paper', pressed: isPressed(s, 'pause')
+    });
+    registerUI('pause', CHIP_PAUSE_X, CHIP_ROW_Y, CHIP_W, CHIP_H);
+    drawChip(ctx, {
+      id: 'mute', x: CHIP_MUTE_X, y: CHIP_ROW_Y, w: CHIP_W, h: CHIP_H,
+      icon: 'sound', iconOn: !s.muted, face: 'paper', pressed: isPressed(s, 'mute')
+    });
+    registerUI('mute', CHIP_MUTE_X, CHIP_ROW_Y, CHIP_W, CHIP_H);
+  }
+
+  // 暂停面板：压暗 + 纸卡 + 三枚芯片（继续 / 重开 / 回标题）
+  function drawPausePanel(ctx, s) {
+    ctx.fillStyle = 'rgba(27,23,20,.45)';
+    ctx.fillRect(0, 0, W, H);
+
+    var pw = 560, ph = 240;
+    var px = (W - pw) / 2, py = (H - ph) / 2 - 20;
+    roundRectPath(ctx, px + 4, py + 4, pw, ph, 16);
+    ctx.fillStyle = UI_SHADOW;
+    ctx.fill();
+    roundRectPath(ctx, px, py, pw, ph, 16);
+    ctx.fillStyle = UI_PAPER;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = COL.ink;
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    setFont(ctx, 'bold', 34);
+    ctx.fillStyle = COL.ink;
+    ctx.fillText('暂停', W / 2, py + 62);
+
+    var defs = [
+      { id: 'resume', label: '继续', face: 'wood' },
+      { id: 'restart', label: '重开', face: 'paper' },
+      { id: 'back', label: '回标题', face: 'paper' }
+    ];
+    var bw = 150, gap = 20;
+    var by = py + 122, bh = 48;
+    var bx = px + (pw - (defs.length * bw + (defs.length - 1) * gap)) / 2;
+    for (var i = 0; i < defs.length; i++) {
+      drawChip(ctx, {
+        id: defs[i].id, x: bx, y: by, w: bw, h: bh,
+        label: defs[i].label, face: defs[i].face, pressed: isPressed(s, defs[i].id)
+      });
+      registerUI(defs[i].id, bx, by, bw, bh);
+      bx += bw + gap;
+    }
+
+    setFont(ctx, 'normal', 12);
+    ctx.fillStyle = 'rgba(43,35,32,.55)';
+    ctx.fillText('P 继续 · R 重开 · Esc 回标题', W / 2, py + ph - 26);
+  }
+
   // 中上：总计时 + 当前圈（倒计时期间计时显示占位）
   function drawCenterHUD(ctx, race, phase) {
     var laps = race && race.laps > 0 ? Math.floor(race.laps) : DEFAULT_LAPS;
@@ -267,7 +434,7 @@
     ctx.fillStyle = DIM_RESULT;
     ctx.fillRect(0, 0, W, H);
 
-    var px = 280, py = 140, pw = 720, ph = 440;
+    var px = 280, py = 140, pw = 720, ph = 470;
     roundRectPath(ctx, px, py, pw, ph, HUD_R);
     ctx.fillStyle = PAPER;
     ctx.fill();
@@ -341,15 +508,31 @@
       lapY += 20;
     }
 
-    // 分圈与底部提示之间的细分隔线
+    // 分圈与按钮之间的细分隔线
     ctx.fillStyle = 'rgba(43,35,32,.12)';
     ctx.fillRect(px + 40, py + 380, pw - 80, 2);
 
-    // 底部提示
-    setFont(ctx, 'normal', 18);
+    // 底部按钮：再来一局（主操作）/ 回标题；键盘 R / Esc 同义
+    var defs = [
+      { id: 'again', label: '再来一局', face: 'wood' },
+      { id: 'back', label: '回标题', face: 'paper' }
+    ];
+    var bw = 190, gap = 24;
+    var by = py + 394, bh = 48;
+    var bx = px + (pw - (defs.length * bw + (defs.length - 1) * gap)) / 2;
+    for (var b = 0; b < defs.length; b++) {
+      drawChip(ctx, {
+        id: defs[b].id, x: bx, y: by, w: bw, h: bh,
+        label: defs[b].label, face: defs[b].face, pressed: isPressed(s, defs[b].id)
+      });
+      registerUI(defs[b].id, bx, by, bw, bh);
+      bx += bw + gap;
+    }
+
+    setFont(ctx, 'normal', 12);
     ctx.textAlign = 'center';
-    ctx.fillStyle = COL.ink;
-    ctx.fillText('按 R 再来一局 · Esc 返回标题', W / 2, 540);
+    ctx.fillStyle = 'rgba(43,35,32,.55)';
+    ctx.fillText('R 再来一局 · Esc 返回标题', W / 2, py + ph - 12);
   }
 
   // 圆角矩形路径（不依赖 ctx.roundRect，兼容旧内核）
@@ -543,29 +726,35 @@
     drawCarImpl(ctx, track, entry, time, entryIndex(entry));
   }
 
-  // HUD：两块玩家面板 + 中上计时；倒计时数字与结算面板按阶段附加
+  // HUD：两块玩家面板 + 中上计时；倒计时 / 暂停 / 结算按阶段附加；芯片组注册屏上按钮
   function drawHUD(ctx, s) {
     if (!ctx || !s) return;
     var phase = s.phase;
-    if (phase !== 'countdown' && phase !== 'running' && phase !== 'finished') return;
+    if (phase !== 'countdown' && phase !== 'running' && phase !== 'paused' && phase !== 'finished') return;
+    uiBeginFrame();
     var race = s.race || null;
 
     ctx.save();
     drawPlayerPanel(ctx, race, 0, false, s.best);
     drawPlayerPanel(ctx, race, 1, true, s.best);
-    drawCenterHUD(ctx, race, phase);
-    if (phase === 'countdown') {
-      drawCountdown(ctx, s);
-      ctx.save();
-      setFont(ctx, 'normal', 14);
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(233,220,196,.6)';
-      ctx.fillText('按住左半屏 = P1 油门　按住右半屏 = P2 油门', W / 2, H - 36);
-      ctx.restore();
+    if (phase === 'paused') {
+      drawPausePanel(ctx, s);
+    } else {
+      drawCenterHUD(ctx, race, phase);
+      if (phase === 'countdown') {
+        drawCountdown(ctx, s);
+        ctx.save();
+        setFont(ctx, 'normal', 14);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(233,220,196,.6)';
+        ctx.fillText('按住左半屏 = P1 油门　按住右半屏 = P2 油门', W / 2, H - 36);
+        ctx.restore();
+      }
+      if (phase === 'countdown' || phase === 'running') drawRaceChips(ctx, s);
     }
     if (phase === 'finished') drawResult(ctx, s);
-    if (s.portrait) drawPortraitHint(ctx);
+    if (s.portrait) drawPortraitHint(ctx, s);
     ctx.restore();
   }
 
@@ -606,8 +795,10 @@
     return px < row.nameCx ? 'left' : 'right';
   }
 
-  // 竖屏提示：不阻断游戏，只盖一层半透明遮罩提醒旋转设备
-  function drawPortraitHint(ctx) {
+  // 竖屏提示：盖一层半透明遮罩提醒旋转设备；点按任意处可关掉继续竖屏玩（本会话内不再弹）
+  // 注册成全屏按钮：命中优先级最高（最后注册），竖屏下的第一要点掉遮罩，之后才能点到芯片
+  function drawPortraitHint(ctx, s) {
+    if (s && s.portraitHint === false) return;
     ctx.save();
     ctx.fillStyle = 'rgba(27,23,20,.55)';
     ctx.fillRect(0, 0, W, H);
@@ -615,11 +806,13 @@
     ctx.textBaseline = 'middle';
     setFont(ctx, 'bold', 26);
     ctx.fillStyle = 'rgba(233,220,196,.95)';
-    ctx.fillText('建议横屏游玩', W / 2, H / 2 - 18);
+    ctx.fillText('建议横屏游玩', W / 2, H / 2 - 26);
     setFont(ctx, 'normal', 16);
     ctx.fillStyle = 'rgba(233,220,196,.75)';
-    ctx.fillText('旋转设备后继续', W / 2, H / 2 + 22);
+    ctx.fillText('旋转设备后继续', W / 2, H / 2 + 12);
+    ctx.fillText('点按任意处继续（竖屏也能玩）', W / 2, H / 2 + 40);
     ctx.restore();
+    registerUI('portraitDismiss', 0, 0, W, H);
   }
 
   // 标题界面：压暗底图 + 标题 / 副标题 / 操作提示 / 呼吸闪烁的开始提示
@@ -629,6 +822,7 @@
     titleArrowHits.left = null;
     titleArrowHits.right = null;
     titleRowHit = null;
+    uiBeginFrame();
 
     ctx.save();
     ctx.fillStyle = DIM_TITLE;
@@ -702,7 +896,14 @@
     ctx.fillText('点击 / 点按任意处开始', W / 2, 470);
     ctx.globalAlpha = 1;
 
-    if (s.portrait) drawPortraitHint(ctx);
+    // 右上角静音芯片（M 键同义；命中先于「点按任意处开始」，见 main.onPointerDown）
+    drawChip(ctx, {
+      id: 'mute', x: W - 24 - CHIP_W, y: 20, w: CHIP_W, h: CHIP_H,
+      icon: 'sound', iconOn: !s.muted, face: 'paper', pressed: isPressed(s, 'mute')
+    });
+    registerUI('mute', W - 24 - CHIP_W, 20, CHIP_W, CHIP_H);
+
+    if (s.portrait) drawPortraitHint(ctx, s);
     ctx.restore();
   }
 
@@ -752,6 +953,7 @@
     drawTitle: drawTitle,
     hitTestTitleArrow: hitTestTitleArrow,
     hitTestTitleRow: hitTestTitleRow,
+    hitTestUI: hitTestUI,
     emit: emit,
     updateParticles: updateParticles,
     width: W,

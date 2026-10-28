@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const trackMod = require('../js/track.js');
 const carMod = require('../js/car.js');
 const raceMod = require('../js/race.js');
+const renderMod = require('../js/render.js');
 
 // 固定物理步长（与 main.js 保持一致）
 const DT = 1 / 120;
@@ -246,4 +247,54 @@ test('触摸油门：setTouch 控制 P1/P2，clear 后全部释放', () => {
   inp.clear();
   assert.equal(inp.get(1), 0, 'clear 后触摸油门应释放');
   inp.destroy();
+});
+
+// 10) 屏上按钮：drawTitle / drawHUD 注册的芯片可被 hitTestUI 命中，触控目标 ≥44px
+// 说明：屏上按钮是手机唯一的暂停/静音/回标题入口；漏注册 = 手机上功能整个不可达。
+// 结算页按钮也在这里一并覆盖（boot-sim 无法快速跑到 finished）。
+test('UI：各阶段芯片注册命中区，触控目标 ≥44 且不与油门区冲突', () => {
+  // Canvas2D 桩：所有方法吞掉，measureText 给固定宽度
+  const ctx = new Proxy({}, {
+    get(t, p) {
+      if (p === 'measureText') return () => ({ width: 10 });
+      if (typeof t[p] !== 'undefined') return t[p];
+      return () => {};
+    },
+    set(t, p, v) { t[p] = v; return true; }
+  });
+  const R = renderMod;
+
+  // 比赛阶段：暂停 + 静音芯片
+  R.drawHUD(ctx, { phase: 'running', time: 0, race: null, muted: false, pressed: [] });
+  assert.equal(R.hitTestUI(851, 46), 'pause', '暂停芯片中心应命中');
+  assert.equal(R.hitTestUI(828, 24), 'pause', '暂停芯片左上角应命中');
+  assert.equal(R.hitTestUI(874, 68), 'pause', '暂停芯片右下角应命中');
+  assert.equal(R.hitTestUI(877, 68), null, '芯片外 3px 不应命中');
+  assert.equal(R.hitTestUI(907, 46), 'mute', '静音芯片中心应命中');
+
+  // 暂停阶段：面板三键
+  R.drawHUD(ctx, { phase: 'paused', time: 0, race: null, muted: false, pressed: [] });
+  assert.equal(R.hitTestUI(475, 374), 'resume', '继续键应命中');
+  assert.equal(R.hitTestUI(640, 374), 'restart', '重开键应命中');
+  assert.equal(R.hitTestUI(805, 374), 'back', '回标题键应命中');
+
+  // 结算阶段：再来一局 / 回标题（race 用 null 也要能画出按钮并注册）
+  R.drawHUD(ctx, { phase: 'finished', time: 0, race: null, muted: false, pressed: [] });
+  const againHit = R.hitTestUI(533, 556);
+  const backHit = R.hitTestUI(747, 556);
+  assert.ok(againHit === 'again' || againHit === 'back', '结算页应有按钮命中，实际 ' + againHit);
+  assert.ok(backHit === 'again' || backHit === 'back', '结算页应有按钮命中，实际 ' + backHit);
+
+  // 标题阶段：右上角静音芯片；油门区（下半屏）不应注册任何按钮
+  R.drawTitle(ctx, { phase: 'title', time: 0, trackName: '阁楼复刻', trackDesc: '', trackCount: 2, muted: false, pressed: [] });
+  assert.equal(R.hitTestUI(1233, 42), 'mute', '标题静音芯片应命中');
+  assert.equal(R.hitTestUI(100, 600), null, '标题下半屏（点按开始区）不应注册按钮');
+
+  // 竖屏遮罩：portrait 时全屏可点，且优先于其他按钮（最后注册 = 最上层）
+  R.drawHUD(ctx, { phase: 'running', time: 0, race: null, muted: false, pressed: [], portrait: true });
+  assert.equal(R.hitTestUI(640, 360), 'portraitDismiss', '竖屏遮罩全屏命中');
+  assert.equal(R.hitTestUI(851, 46), 'portraitDismiss', '遮罩优先于暂停芯片');
+  R.drawHUD(ctx, { phase: 'running', time: 0, race: null, muted: false, pressed: [], portrait: true, portraitHint: false });
+  assert.equal(R.hitTestUI(640, 360), null, 'portraitHint=false 时不注册遮罩');
+  assert.equal(R.hitTestUI(851, 46), 'pause', '遮罩关闭后暂停芯片恢复可命中');
 });

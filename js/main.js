@@ -6,6 +6,7 @@
   var STEP = 1 / 120;      // 固定物理步长（秒）
   var MAX_STEPS = 6;       // 单帧最多补 6 步，避免卡顿后雪崩
   var BEST_KEY = 'slotrace.best';
+  var MUTE_KEY = 'slotrace.muted';  // 静音状态持久化（'1' 静音 / '0' 有声）
   var TRACK_KEY = 'slotrace.track';   // 标题界面选择的赛道（localStorage 持久化）
   var FALLBACK = '#C98B55';
   var DEFAULT_LAPS = 3;    // 默认圈数（无头截图可用 ?laps=N 覆盖）
@@ -93,6 +94,10 @@
     } catch (err) { scene = null; }
     try { input = window.RaceInput ? window.RaceInput.createInput() : null; } catch (err) { input = null; }
     try { audio = window.RaceAudio ? window.RaceAudio.createAudio() : null; } catch (err) { audio = null; }
+    // 恢复上次的静音选择（M 键 / 屏上喇叭写入 localStorage）
+    try {
+      if (audio && window.localStorage && window.localStorage.getItem(MUTE_KEY) === '1') audio.setMuted(true);
+    } catch (errM) { /* 隐私模式静默 */ }
     // 3D 渲染器：缺 three.js / WebGL 不可用时留空，draw() 回落 2D。
     // 失败原因必须留下痕迹——静默回落会表现成「画面正常但完全不对」（曾因一处 ReferenceError 整局掉进 2D 路径）
     try {
@@ -159,6 +164,51 @@
     if (audio && typeof audio.resume === 'function') audio.resume();
   }
 
+  // ---- 屏上按钮（桌游纸卡芯片）----
+  var pressedPointers = Object.create(null);  // pointerId → 按住的按钮 id（按下高亮用）
+  var portraitHintDismissed = false;          // 竖屏遮罩「点按继续」后本会话内不再弹
+
+  // 按下集合归并去重，供 render 高亮芯片
+  function pressedUIList() {
+    var out = [];
+    for (var k in pressedPointers) {
+      var v = pressedPointers[k];
+      if (out.indexOf(v) < 0) out.push(v);
+    }
+    return out;
+  }
+
+  // 屏上按钮动作：键盘快捷键与触摸按钮共用同一条路径
+  function togglePause() {
+    if (phase === 'paused') { phase = pausedFrom || 'running'; pausedFrom = null; }
+    else if (phase === 'countdown' || phase === 'running') { pausedFrom = phase; phase = 'paused'; }
+  }
+
+  function backToTitle() {
+    phase = 'title';
+    race = null;
+    acc = 0;
+    portraitHintDismissed = false;
+    releaseAllPointers();
+  }
+
+  function toggleMute() {
+    if (!audio) return;
+    var next = !audio.isMuted();
+    audio.setMuted(next);
+    try { window.localStorage.setItem(MUTE_KEY, next ? '1' : '0'); } catch (err) { /* 隐私模式静默 */ }
+  }
+
+  function runUIAction(id) {
+    if (id === 'pause' || id === 'resume') togglePause();
+    else if (id === 'restart' || id === 'again') startRace();
+    else if (id === 'back') backToTitle();
+    else if (id === 'mute') toggleMute();
+    else if (id === 'portraitDismiss') portraitHintDismissed = true;
+    var D = window.__DBG__ || (window.__DBG__ = {});
+    D.ui = id;
+  }
+
   // ---- 移动端：左右半屏油门 ----
   var activePointers = Object.create(null);   // pointerId → 0（左半屏）| 1（右半屏）
   var touchHeld = [false, false];             // 左右半屏当前是否被按住
@@ -182,6 +232,7 @@
   }
 
   function releasePointer(id) {
+    delete pressedPointers[id];
     var z = activePointers[id];
     if (z === undefined) return;
     delete activePointers[id];
@@ -214,6 +265,21 @@
   function onPointerDown(e) {
     try { if (hudCanvas && hudCanvas.focus) hudCanvas.focus(); } catch (err) { /* 忽略 */ }
 
+    // 屏上按钮最先消费：比赛里点芯片不能变成半屏油门，标题里点喇叭不能开赛
+    var R = window.RaceRender;
+    var uiHit = null;
+    if (R && typeof R.hitTestUI === 'function') {
+      var lp = toLogical(e);
+      try { uiHit = R.hitTestUI(lp.x, lp.y); } catch (err0) { uiHit = null; }
+    }
+    if (uiHit) {
+      var pid = (e && e.pointerId !== undefined) ? e.pointerId : 'p';
+      pressedPointers[pid] = uiHit;
+      runUIAction(uiHit);
+      if (e && e.preventDefault) e.preventDefault();
+      return;
+    }
+
     // 比赛中：按住左右半屏 = 对应玩家的油门（多点触控各自跟踪，第二根手指也算）
     if (phase === 'countdown' || phase === 'running') {
       var id = (e && e.pointerId !== undefined) ? e.pointerId : 'p';
@@ -225,7 +291,6 @@
     }
 
     if (phase !== 'title' && phase !== 'finished') return;
-    var R = window.RaceRender;
     var hit = null;
     if (R) {
       var p = toLogical(e);
@@ -269,12 +334,9 @@
     input.consume('right');
     if (input.consume('start') && (phase === 'title' || phase === 'finished')) startRace();
     if (input.consume('restart')) startRace();
-    if (input.consume('mute') && audio) audio.setMuted(!audio.isMuted());
-    if (input.consume('back')) { phase = 'title'; race = null; acc = 0; }
-    if (input.consume('pause')) {
-      if (phase === 'paused') { phase = pausedFrom || 'running'; pausedFrom = null; }
-      else if (phase === 'countdown' || phase === 'running') { pausedFrom = phase; phase = 'paused'; }
-    }
+    if (input.consume('mute')) toggleMute();
+    if (input.consume('back')) backToTitle();
+    if (input.consume('pause')) togglePause();
   }
 
   // 完赛：切阶段、礼花音、记录冠军最佳圈
@@ -380,6 +442,7 @@
       ? (Math.round(D.pt.x) + ',' + Math.round(D.pt.y)) : '-';
     D.phase = phase;
     D.zones = [touchHeld[0] ? 1 : 0, touchHeld[1] ? 1 : 0];
+    D.muted = audio ? !!audio.isMuted() : false;
     var errCount = window.__ERRORS__ && window.__ERRORS__.length ? window.__ERRORS__.length : 0;
     el.textContent =
       'BUILD5 list=' + trackList.length + ' phase=' + phase + ' id=' + trackId + ' name=' + name + '\n' +
@@ -428,6 +491,7 @@
     }
     scaleX = pixelW / W;
     scaleY = pixelH / H;
+    portraitHintDismissed = false;   // 转屏后遮罩重新评估（仍竖屏则再提示一次）
 
     // 让 WebGL 的视口/宽高比跟上 CSS 尺寸
     if (gl && typeof gl.resize === 'function') {
@@ -452,6 +516,9 @@
       trackName: track ? track.name : '', trackDesc: track ? track.desc : '',
       trackIndex: trackIndex(), trackCount: trackList.length,
       portrait: (window.innerHeight || H) > (window.innerWidth || W),
+      portraitHint: !portraitHintDismissed,
+      muted: audio ? !!audio.isMuted() : false,
+      pressed: pressedUIList()
     };
   }
 
@@ -469,7 +536,7 @@
       hudCtx.textAlign = 'right';
       hudCtx.textBaseline = 'bottom';
       hudCtx.fillStyle = 'rgba(233,220,196,.45)';
-      hudCtx.fillText('build 5 · ' + trackList.length + ' tracks', W - 8, H - 6);
+      hudCtx.fillText('build 9 · ' + trackList.length + ' tracks', W - 8, H - 6);
       hudCtx.restore();
     } else if (typeof window.RaceRender.drawHUD === 'function') {
       window.RaceRender.drawHUD(hudCtx, state);

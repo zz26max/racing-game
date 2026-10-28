@@ -383,3 +383,41 @@
 2. 竖屏只提示不强制；16:9 竖屏黑边较大。
 3. 桌面鼠标按住画面也会给对应半边油门（便于调试），P2 没有鼠标键。
 4. 真机（iOS Safari / Android Chrome）未验证：localStorage 记忆赛道、iOS 双击缩放、多指同时按、转屏后 letterbox 需人工确认。
+
+## 2026-10-28 第十轮：UI 风格定调 + 屏上按钮（桌游纸卡）
+
+### 风格决策（先调研后拍板）
+- 调研结论（详见对话）：赛车 HUD 通行原则「少而靠边、不遮赛道」；cozy/桌游风典型语言是
+  重圆角药丸 + 暖色低饱和 + 纸/木手作框架 + 低压力微交互；移动端硬指标 44pt/48dp 触控目标、
+  拇指弧布局、避开安全区。候选 A 桌游纸卡 / B Art-of-rally 扁平极简 / C Hot-Wheels 塑料街机，
+  用户选 **A**。A 的优势：与阁楼场景同源（UI 即玩具套装的一部分），现有 HUD 已是该语言 70%，
+  补完而非重画。
+- 令牌（render.js 顶部）：CHIP_H=44（触控下限）、圆角 12、描边 2.5、硬投影偏移 4（无模糊、
+  实色 rgba(43,35,32,.35)）、主操作木色面 / 次操作纸面；颜色全部取自场景已有六色。
+
+### 实现
+- **render.js**：
+  - `uiHits` 命中注册表：drawTitle / drawHUD 每帧 `uiBeginFrame()` 重建，`registerUI(id,x,y,w,h)`
+    记录，导出 `hitTestUI(x,y)`（从最上层往回找）。箭头命中框走原有独立路径不动。
+  - `drawChip`：实色硬投影 + 墨描边圆角面，按下整体下沉 3px、投影间隙收成 1px（像按积木）；
+    图标为手绘矢量（暂停双竖条、喇叭+弧线/斜杠），不引外部素材。
+  - 各阶段按钮：比赛 ⏸(828,24,46,44) + ♪(884,24)；暂停面板 继续/重开/回标题（560×240 纸卡）；
+    结算面板加高 440→470，底部 再来一局/回标题；标题右上 ♪。
+  - 竖屏遮罩可关闭：注册全屏 'portraitDismiss'（最后注册=最上层，第一要点掉遮罩），
+    `s.portraitHint === false` 时不再绘制；main 转屏（resize）后重新评估。
+- **main.js**：
+  - `onPointerDown` 最先查 `hitTestUI`——比赛里点芯片不会变成半屏油门，标题里点喇叭不会开赛；
+    `pressedPointers`（pointerId→按钮 id）驱动按下高亮，随 pointerup/cancel 释放。
+  - 键盘路径重构：`togglePause` / `backToTitle` / `toggleMute` 同时服务 P/Esc/M 与屏上按钮。
+  - 静音持久化：`slotrace.muted`（'1'/'0'），init 恢复、toggle 写入。
+  - snapshot 增补 `muted` / `pressed` / `portraitHint`；`__DBG__` 增 `muted`、`ui`（最近一次按钮 id）；
+    build 标记 5 → 9。
+- **回归**：race.test 用例 10（各阶段命中区 + 芯片外 3px 不命中 + 遮罩优先级 + 关闭后恢复）；
+  boot-sim 流程 4（静音持久化/取消、暂停芯片不注入油门 zones 保持 [0,0]、继续、回标题）。
+  变异验证：删掉 `registerUI('pause',…)` → 用例 10 报「暂停芯片中心应命中」。
+- `node --test` 10/10；`_boot-sim` 全流程（含流程 4）通过。脚本版本 ?v=8 → ?v=9。
+
+### 仍未完成
+- 结算页按钮在真机/实机上只被 boot-sim 的逻辑断言覆盖（快速到 finished 需 ?ff，boot-sim
+  单页沙箱没法二次加载；race.test 用例 10 已覆盖注册与命中）。
+- 3D 实机观感（纸卡芯片叠在 3D 画面上的层次、阴影观感）仍需人工看一眼。

@@ -301,4 +301,81 @@ if (windowStub.__DBG__.zones[0] !== 0 || windowStub.__DBG__.zones[1] !== 0) {
 }
 console.log('[zone-both] 双指 [1,1] → 松开 [0,0]');
 
-console.log('启动模拟 ✓ 点击/键盘/开赛全部流程通过');
+// ---- 流程 4：屏上按钮（桌游纸卡芯片）----
+pressKey('Escape'); runFrames(8);
+if (windowStub.__DBG__.phase !== 'title') {
+  console.log('  ✗ 流程4前应回到 title，实际 =', windowStub.__DBG__.phase); process.exit(1);
+}
+
+// 4a：标题右上角静音芯片 → 写入 localStorage 且不会误开赛
+dispatchPointer('pointerdown', 1233, 42, { pointerId: 8 });
+runFrames(8);
+if (windowStub.__DBG__.phase !== 'title') {
+  console.log('  ✗ 点静音芯片不应开赛，phase =', windowStub.__DBG__.phase); process.exit(1);
+}
+if (store['slotrace.muted'] !== '1' || windowStub.__DBG__.muted !== true) {
+  console.log('  ✗ 静音未持久化：store=' + store['slotrace.muted'] + ' muted=' + windowStub.__DBG__.muted); process.exit(1);
+}
+dispatchPointer('pointerup', 1233, 42, { pointerId: 8 });
+runFrames(4);
+console.log('[ui-mute] title 芯片 → 静音持久化 ✓');
+
+// 4b：再点一次恢复有声
+dispatchPointer('pointerdown', 1233, 42, { pointerId: 8 });
+runFrames(8);
+if (store['slotrace.muted'] !== '0' || windowStub.__DBG__.muted !== false) {
+  console.log('  ✗ 取消静音失败'); process.exit(1);
+}
+dispatchPointer('pointerup', 1233, 42, { pointerId: 8 });
+runFrames(4);
+console.log('[ui-unmute] 恢复有声 ✓');
+
+// 4c：开赛 → 点暂停芯片 → paused，且不注入半屏油门
+dispatchPointer('pointerdown', 100, 600, { pointerId: 9 });
+dispatchPointer('pointerup', 100, 600, { pointerId: 9 });
+runFrames(10);
+const phase4c = windowStub.__DBG__.phase;
+if (phase4c !== 'countdown' && phase4c !== 'running') {
+  console.log('  ✗ 点按开赛失败，phase =', phase4c); process.exit(1);
+}
+dispatchPointer('pointerdown', 851, 46, { pointerId: 10 });   // 暂停芯片 (828..874, 24..68)
+runFrames(8);
+if (windowStub.__DBG__.phase !== 'paused') {
+  console.log('  ✗ 点暂停芯片应进入 paused，phase =', windowStub.__DBG__.phase); process.exit(1);
+}
+if (windowStub.__DBG__.zones[0] !== 0 || windowStub.__DBG__.zones[1] !== 0) {
+  console.log('  ✗ 点芯片不应注入油门，zones =', JSON.stringify(windowStub.__DBG__.zones)); process.exit(1);
+}
+dispatchPointer('pointerup', 851, 46, { pointerId: 10 });
+runFrames(2);
+console.log('[ui-pause] 暂停芯片 → paused，zones 保持 [0,0] ✓');
+
+// 4d：暂停面板「继续」→ 恢复比赛
+dispatchPointer('pointerdown', 475, 374, { pointerId: 11 });   // 继续 (400..550, 342..390)
+runFrames(8);
+const phase4d = windowStub.__DBG__.phase;
+if (phase4d !== 'countdown' && phase4d !== 'running') {
+  console.log('  ✗ 点继续应恢复比赛，phase =', phase4d); process.exit(1);
+}
+dispatchPointer('pointerup', 475, 374, { pointerId: 11 });
+runFrames(2);
+console.log('[ui-resume] 暂停面板继续 → ' + phase4d + ' ✓');
+
+// 4e：再暂停 → 「回标题」
+dispatchPointer('pointerdown', 851, 46, { pointerId: 12 });
+runFrames(8);
+if (windowStub.__DBG__.phase !== 'paused') {
+  console.log('  ✗ 再次暂停失败，phase =', windowStub.__DBG__.phase); process.exit(1);
+}
+dispatchPointer('pointerup', 851, 46, { pointerId: 12 });
+runFrames(2);
+dispatchPointer('pointerdown', 805, 374, { pointerId: 13 });   // 回标题 (730..880, 342..390)
+runFrames(8);
+if (windowStub.__DBG__.phase !== 'title') {
+  console.log('  ✗ 点回标题应回 title，phase =', windowStub.__DBG__.phase); process.exit(1);
+}
+dispatchPointer('pointerup', 805, 374, { pointerId: 13 });
+runFrames(2);
+console.log('[ui-back] 暂停面板回标题 ✓');
+
+console.log('启动模拟 ✓ 点击/键盘/开赛/屏上按钮全部流程通过');
