@@ -251,10 +251,92 @@
     gl.scene.add(g1);
     gl.scene.add(g2);
 
+    // ---- 灰尘尾迹（3D）：每车一小池地面圆片，打滑/起步烧胎时从车尾扬起 ----
+    var DUST_N = 16;
+    var DUST_TAN = 0xD4C5A8;
+    var dustGeo = new T.CircleGeometry(1, 10);
+    var dustPool = [];          // { mesh, age, life, vx, vz, size }
+    var dustClock = [0, 0];
+    var dustLastT = null;
+    (function buildDust() {
+      for (var i = 0; i < DUST_N * 2; i++) {
+        var mat = new T.MeshBasicMaterial({
+          color: DUST_TAN, transparent: true, opacity: 0, depthWrite: false
+        });
+        var m = new T.Mesh(dustGeo, mat);
+        m.rotation.x = -Math.PI / 2;
+        m.visible = false;
+        gl.scene.add(m);
+        dustPool.push({ mesh: m, age: 0, life: 1, vx: 0, vz: 0, size: 1 });
+      }
+    })();
+
+    // 找一个空槽（已消亡优先，否则最老的一粒）
+    function dustSlot() {
+      var best = 0, bestAge = -1;
+      for (var i = 0; i < dustPool.length; i++) {
+        var d = dustPool[i];
+        if (d.age >= d.life) return i;
+        if (d.age > bestAge) { bestAge = d.age; best = i; }
+      }
+      return best;
+    }
+
+    function dustSpawn(car, tk, i) {
+      var d = dustPool[dustSlot()];
+      var back = tk.pointAt(Math.max(0, (Number(car.s) || 0) - 16), car.lane === -1 ? -1 : 1);
+      var tan = tangentAt(tk, car.s, back);
+      var elev = (typeof tk.elevationAt === 'function') ? Number(tk.elevationAt(car.s)) : 0;
+      if (!isFinite(elev)) elev = 0;
+      d.mesh.position.set(
+        back.x - tan.tx * 6 + (Math.random() - 0.5) * 6,
+        elev + 0.6,
+        back.y - tan.ty * 6 + (Math.random() - 0.5) * 6
+      );
+      d.vx = -tan.tx * 26 + (Math.random() - 0.5) * 26;
+      d.vz = -tan.ty * 26 + (Math.random() - 0.5) * 26;
+      d.size = 3 + Math.random() * 2.5;
+      d.age = 0;
+      d.life = 0.5 + Math.random() * 0.3;
+      d.mesh.visible = true;
+    }
+
+    function dustUpdate(entries, tk, dt) {
+      var i, d;
+      // 发射（克制：侧滑或起步烧胎才扬，每车 80ms 一粒）
+      if (entries && tk && typeof tk.pointAt === 'function') {
+        for (i = 0; i < 2 && i < entries.length; i++) {
+          dustClock[i] -= dt;
+          var car = entries[i] && entries[i].car;
+          if (!car || car.derailed || dustClock[i] > 0) continue;
+          var sliding = (Number(car.slip) || 0) > 0.3;
+          var launching = (Number(car.throttle) || 0) > 0.85 && (Number(car.speed) || 0) < 150;
+          if (!sliding && !launching) continue;
+          dustClock[i] = 0.08;
+          dustSpawn(car, tk, i);
+        }
+      }
+      // 推进
+      for (i = 0; i < dustPool.length; i++) {
+        d = dustPool[i];
+        if (d.age >= d.life) { d.mesh.visible = false; continue; }
+        d.age += dt;
+        if (d.age >= d.life) { d.mesh.visible = false; continue; }
+        var k = d.age / d.life;
+        d.mesh.position.x += d.vx * dt;
+        d.mesh.position.z += d.vz * dt;
+        var sc = d.size * (0.55 + k * 1.5);
+        d.mesh.scale.set(sc, sc, 1);
+        d.mesh.material.opacity = 0.3 * (1 - k);
+      }
+    }
+
     var orig = gl.render;
     gl.render = function (race, time) {
       var t = Number(time);
       if (!isFinite(t)) t = 0;
+      var dt = (dustLastT === null) ? 0 : Math.min(0.05, Math.max(0, t - dustLastT));
+      dustLastT = t;
       var entries = race && race.entries;
       var tk = gl.track || track;
       if (entries && tk && typeof tk.pointAt === 'function') {
@@ -265,6 +347,7 @@
           try { syncCar(cars[i], car, tk, t); } catch (err) { /* 单车同步失败不影响整帧 */ }
         }
       }
+      try { dustUpdate(entries, tk, dt); } catch (err2) { /* 尾迹失败不影响整帧 */ }
       if (typeof orig === 'function') return orig.apply(gl, arguments);
       return undefined;
     };

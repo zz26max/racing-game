@@ -551,6 +551,76 @@
     ctx.closePath();
   }
 
+  // ---- 灰尘尾迹（2D 兜底；克制：只在打滑/起步烧胎时少量扬起）----
+  var dust = [];              // { x, y, vx, vy, age, life, size }
+  var DUST_MAX = 56;
+  var DUST_TAN = '212,197,168';
+  var dustClock = [0, 0];     // 每车发射节流
+  var dustLastT = null;
+
+  // 供测试观察规模
+  function dustStats() { return { count: dust.length, max: DUST_MAX }; }
+
+  // 发射条件：侧滑（slip>0.3）或起步烧胎（大油门低速）；每车 80ms 一粒，全局封顶
+  function updateDust(s, dt) {
+    var race = s.race;
+    var track = s.track || (race && race.track) || null;
+    var entries = race && race.entries;
+    var i, e, car;
+    if (!(dt > 0)) dt = 0.016;
+    if (entries && track && typeof track.pointAt === 'function') {
+      for (i = 0; i < entries.length && i < 2; i++) {
+        dustClock[i] -= dt;
+        e = entries[i];
+        car = e && e.car;
+        if (!car || car.derailed || dustClock[i] > 0) continue;
+        var sliding = (Number(car.slip) || 0) > 0.3;
+        var launching = (Number(car.throttle) || 0) > 0.85 && (Number(car.speed) || 0) < 150;
+        if (!sliding && !launching) continue;
+        if (dust.length >= DUST_MAX) continue;
+        dustClock[i] = 0.08;
+        var tan = track.sampleAt(car.s);
+        var back = track.pointAt(Math.max(0, (Number(car.s) || 0) - 16), car.lane === -1 ? -1 : 1);
+        var tx = tan ? tan.tx : 1, ty = tan ? tan.ty : 0;
+        dust.push({
+          x: back.x - tx * 6 + (Math.random() - 0.5) * 6,
+          y: back.y - ty * 6 + (Math.random() - 0.5) * 6,
+          vx: -tx * 24 + (Math.random() - 0.5) * 26,
+          vy: -ty * 24 + (Math.random() - 0.5) * 26,
+          age: 0,
+          life: 0.5 + Math.random() * 0.3,
+          size: 3.5 + Math.random() * 2.5
+        });
+      }
+    }
+    for (i = dust.length - 1; i >= 0; i--) {
+      var d = dust[i];
+      d.age += dt;
+      if (d.age >= d.life) { dust.splice(i, 1); continue; }
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.vx *= (1 - 1.6 * dt);
+      d.vy *= (1 - 1.6 * dt);
+    }
+  }
+
+  // 世界坐标画尘粒（底图之上、车辆之下）
+  function drawDust(ctx) {
+    if (!dust.length) return;
+    ctx.save();
+    for (var i = 0; i < dust.length; i++) {
+      var d = dust[i];
+      var k = d.age / d.life;
+      ctx.globalAlpha = 0.32 * (1 - k);
+      ctx.fillStyle = 'rgb(' + DUST_TAN + ')';
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.size * (0.55 + k * 1.35), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
   // 车辆序号：draw 遍历时传入；单独调用时从 entry / car 上推断（P2 也可按车名识别）
   function entryIndex(entry) {
     var i = entry ? entry.index : undefined;
@@ -1086,6 +1156,16 @@
     var race = s.race;
     var track = s.track || (race && race.track) || null;
     var time = Number(s.time) || 0;
+
+    // 灰尘尾迹：底图之上、车辆之下（时间差驱动发射与消亡）
+    var dt = (dustLastT === null) ? 0 : clamp(time - dustLastT, 0, 0.05);
+    dustLastT = time;
+    updateDust(s, dt);
+    ctx.save();
+    ctx.translate(ORIGIN_X, ORIGIN_Y);
+    drawDust(ctx);
+    ctx.restore();
+
     if (race && race.entries && race.entries.length) {
       // 车辆坐标是赛道坐标（原点在赛道中心），画布是 0..W / 0..H；
       // 与底图的赛道层一样要平移到画布中心，否则整局都落在左上角外
@@ -1109,6 +1189,7 @@
     hitTestTitleArrow: hitTestTitleArrow,
     hitTestTitleRow: hitTestTitleRow,
     hitTestUI: hitTestUI,
+    dustStats: dustStats,
     emit: emit,
     updateParticles: updateParticles,
     width: W,

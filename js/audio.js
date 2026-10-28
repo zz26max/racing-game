@@ -171,16 +171,8 @@
         noiseSrc.loop = true;
         var bp = ctx.createBiquadFilter();
         bp.type = 'bandpass';
-        bp.frequency.value = 1800;
-        bp.Q.value = 4.2;
-        var bpLfo = ctx.createOscillator();
-        bpLfo.type = 'sine';
-        bpLfo.frequency.value = 7.5;
-        var bpLfoDepth = ctx.createGain();
-        bpLfoDepth.gain.value = 0;
-        bpLfo.connect(bpLfoDepth);
-        bpLfoDepth.connect(bp.frequency);
-        bpLfo.start();
+        bp.frequency.value = 750;
+        bp.Q.value = 0.9;      // 低 Q：宽频"沙沙"，无啸叫也无脉冲
         var screechGain = ctx.createGain();
         screechGain.gain.value = 0;
         noiseSrc.connect(bp);
@@ -191,7 +183,7 @@
         engines[i] = {
           sawA: sawA, sawB: sawB, filter: filter, gain: gain,
           lfoDepth: lfoDepth,
-          bp: bp, bpLfoDepth: bpLfoDepth, screechGain: screechGain
+          bp: bp, screechGain: screechGain
         };
         return engines[i];
       } catch (err) {
@@ -213,7 +205,6 @@
               e.gain.gain.setTargetAtTime(0, t, 0.05);            // 解除静音后由 engine() 按油门恢复
               e.lfoDepth.gain.setTargetAtTime(0, t, 0.05);
               e.screechGain.gain.setTargetAtTime(0, t, 0.05);
-              e.bpLfoDepth.gain.setTargetAtTime(0, t, 0.05);
             }
           } catch (err) { /* 静默失败 */ }
         }
@@ -240,9 +231,9 @@
           slot.filter.frequency.setTargetAtTime(380 + s * 1500, t, 0.1);
           slot.gain.gain.setTargetAtTime(ENGINE_GAIN * th, t, 0.08);
           slot.lfoDepth.gain.setTargetAtTime(0.01 * th, t, 0.1);
-          slot.bp.frequency.setTargetAtTime(850 + w * 650, t, 0.12);
-          slot.bpLfoDepth.gain.setTargetAtTime(140 + w * 100, t, 0.15);
-          slot.screechGain.gain.setTargetAtTime(w * SCREECH_GAIN, t, 0.15);
+          // 轮胎低噪：750..1300Hz 宽频沙沙，0.18s 慢攻——是"渐渐紧张"不是突然出现
+          slot.bp.frequency.setTargetAtTime(750 + w * 550, t, 0.15);
+          slot.screechGain.gain.setTargetAtTime(w * 0.035, t, 0.18);
         } catch (err) { /* 静默失败 */ }
       },
 
@@ -279,10 +270,9 @@
         tone(1250, 0, 0.05, 0.07, 'triangle');
       },
 
-      // 救车成功：两音上行（440→660 triangle，比过圈 chime 低而钝，音色可区分）
+      // 救车成功：单音轻点（弯道里可能频繁出现，克制）
       save: function () {
-        tone(440, 0, 0.09, 0.14, 'triangle');
-        tone(660, 0.09, 0.12, 0.14, 'triangle');
+        tone(520, 0, 0.08, 0.08, 'triangle');
       },
 
       // 两音上行
@@ -309,7 +299,6 @@
             engines[k].gain.disconnect();
             engines[k].lfoDepth.disconnect();
             engines[k].bp.disconnect();
-            engines[k].bpLfoDepth.disconnect();
             engines[k].screechGain.disconnect();
           } catch (err) { /* 忽略 */ }
         }

@@ -340,9 +340,9 @@ test('音效：engine 预警参数、click/save/beep 入队，静音时全部静
     const audio = audioMod.createAudio();
     audio.resume();   // ctx 惰性创建（真实浏览器由首次手势触发）；state 桩固定 'running'
 
-    // 引擎 + 摩擦层：双锯齿 + 两条 LFO 振荡器 + 一条循环噪声源（第 4 参 = 油门行程）
+    // 引擎 + 摩擦层：双锯齿 + 一条调幅 LFO + 一条循环噪声源（第 4 参 = 油门行程）
     audio.engine(0, 0.5, 0.9, 0.8);
-    assert.ok(contOsc >= 4, 'engine 应建立双锯齿+两条LFO共4条持续振荡器，实际 ' + contOsc);
+    assert.ok(contOsc >= 3, 'engine 应建立双锯齿+调幅LFO共3条持续振荡器，实际 ' + contOsc);
     assert.ok(contNoise >= 1, 'engine 应建立循环噪声源（轮胎摩擦层），实际 ' + contNoise);
 
     // 定时音入队
@@ -352,7 +352,7 @@ test('音效：engine 预警参数、click/save/beep 入队，静音时全部静
     const freqs = scheduled.map(x => x.freq);
     assert.ok(freqs.indexOf(440) >= 0, 'beep(440) 应入队');
     assert.ok(freqs.indexOf(1250) >= 0, 'click tick 应入队');
-    assert.ok(freqs.indexOf(660) >= 0, 'save 上行第二音应入队');
+    assert.ok(freqs.indexOf(520) >= 0, 'save 轻点音应入队');
     const beforeMuted = scheduled.length;
 
     // 静音门控：muted 期间一个新音都不入队
@@ -371,4 +371,72 @@ test('音效：engine 预警参数、click/save/beep 入队，静音时全部静
   } finally {
     if (prevWindow === undefined) delete global.window; else global.window = prevWindow;
   }
+});
+
+// 12) 灰尘尾迹（2D 路径）：滑行/起步时生成、有上限、随时间消亡
+test('尾迹：打滑扬尘、规模封顶、消亡后归零', () => {
+  const ctx = new Proxy({}, {
+    get(t, p) {
+      if (p === 'measureText') return () => ({ width: 10 });
+      if (typeof t[p] !== 'undefined') return t[p];
+      return () => {};
+    },
+    set(t, p, v) { t[p] = v; return true; }
+  });
+  const track = trackMod.createTrack('figure8');
+  const car = { s: 500, lane: 1, slip: 0.8, throttle: 1, speed: 200, derailed: false, offset: 0, slideSide: 1 };
+  const state = { phase: 'running', scene: null, track: track, muted: false, pressed: [], portrait: false,
+    race: { track: track, laps: 3, elapsed: 0, winner: null,
+      entries: [{ car: car, lap: 0, finished: false }] } };
+
+  // 起步：第一帧建立时间基准
+  renderMod.draw(ctx, Object.assign({}, state, { time: 0 }));
+  // 打滑 1 秒（多帧）：应持续扬尘
+  for (let f = 1; f <= 60; f++) {
+    renderMod.draw(ctx, Object.assign({}, state, { time: f * 0.0167 }));
+  }
+  const stats = renderMod.dustStats();
+  assert.ok(stats.count > 0, '打滑 1 秒应有尘粒在场上，实际 ' + stats.count);
+  assert.ok(stats.count <= stats.max, '尘粒数不得超上限');
+
+  // 停止打滑 + 时间快进：尘粒应全部消亡
+  car.slip = 0; car.throttle = 0;
+  for (let f = 61; f <= 180; f++) {
+    renderMod.draw(ctx, Object.assign({}, state, { time: f * 0.0167 }));
+  }
+  assert.equal(renderMod.dustStats().count, 0, '停止打滑 2 秒后尘粒应全部消亡');
+});
+
+// 12) 灰尘尾迹（2D 路径）：滑行/起步时生成、有上限、随时间消亡
+test('尾迹：打滑扬尘、规模封顶、消亡后归零', () => {
+  const ctx = new Proxy({}, {
+    get(t, p) {
+      if (p === 'measureText') return () => ({ width: 10 });
+      if (typeof t[p] !== 'undefined') return t[p];
+      return () => {};
+    },
+    set(t, p, v) { t[p] = v; return true; }
+  });
+  const track = trackMod.createTrack('figure8');
+  const car = { s: 500, lane: 1, slip: 0.8, throttle: 1, speed: 200, derailed: false, offset: 0, slideSide: 1 };
+  const state = { phase: 'running', scene: null, track: track, muted: false, pressed: [], portrait: false,
+    race: { track: track, laps: 3, elapsed: 0, winner: null,
+      entries: [{ car: car, lap: 0, finished: false }] } };
+
+  // 起步：第一帧建立时间基准
+  renderMod.draw(ctx, Object.assign({}, state, { time: 0 }));
+  // 打滑 1 秒（多帧）：应持续扬尘
+  for (let f = 1; f <= 60; f++) {
+    renderMod.draw(ctx, Object.assign({}, state, { time: f * 0.0167 }));
+  }
+  const stats = renderMod.dustStats();
+  assert.ok(stats.count > 0, '打滑 1 秒应有尘粒在场上，实际 ' + stats.count);
+  assert.ok(stats.count <= stats.max, '尘粒数不得超上限');
+
+  // 停止打滑 + 时间快进：尘粒应全部消亡
+  car.slip = 0; car.throttle = 0;
+  for (let f = 61; f <= 180; f++) {
+    renderMod.draw(ctx, Object.assign({}, state, { time: f * 0.0167 }));
+  }
+  assert.equal(renderMod.dustStats().count, 0, '停止打滑 2 秒后尘粒应全部消亡');
 });
