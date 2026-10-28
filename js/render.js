@@ -12,6 +12,9 @@
 
   var W = 1280;             // 逻辑宽
   var H = 720;              // 逻辑高
+  // 赛道坐标（原点在赛道中心）→ 画布坐标的平移量；底图的赛道层与车辆必须用同一个
+  var ORIGIN_X = W / 2;
+  var ORIGIN_Y = H / 2;
   var CAR_W = 42;           // 底盘宽
   var CAR_H = 26;           // 底盘高
   var CAR_R = 5;            // 底盘圆角
@@ -701,9 +704,14 @@
     var track = s.track || (race && race.track) || null;
     var time = Number(s.time) || 0;
     if (race && race.entries && race.entries.length) {
+      // 车辆坐标是赛道坐标（原点在赛道中心），画布是 0..W / 0..H；
+      // 与底图的赛道层一样要平移到画布中心，否则整局都落在左上角外
+      ctx.save();
+      ctx.translate(ORIGIN_X, ORIGIN_Y);
       for (var i = 0; i < race.entries.length; i++) {
         drawCarImpl(ctx, track, race.entries[i], time, i);
       }
+      ctx.restore();
     }
 
     if (s.phase === 'title') drawTitle(ctx, s);

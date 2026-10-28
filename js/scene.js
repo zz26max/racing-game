@@ -7,6 +7,9 @@
 
   var W = 1280;             // 逻辑宽
   var H = 720;              // 逻辑高
+  // 赛道坐标 → 画布坐标的平移量（与 js/render.js 的车辆绘制保持一致）
+  var ORIGIN_X = W / 2;
+  var ORIGIN_Y = H / 2;
   var WALL_H = 48;          // 墙高
   var PLANK_W = 40;         // 木板宽度
   var PLANK_L = 240;        // 木板长度（相邻列端缝错开一半）
@@ -328,11 +331,16 @@
     drawRug(ctx);
     drawLight(ctx);
 
+    // 赛道层：赛道坐标原点在赛道中心（可正可负），画布是 0..W / 0..H，
+    // 所以整层平移到画布中心。车辆在 render.js 里用同一个平移量。
     if (track && track.points && track.points.length > 1) {
+      ctx.save();
+      ctx.translate(ORIGIN_X, ORIGIN_Y);
       drawTrack(ctx, track);
       if (typeof track.pointAt === 'function') drawSlots(ctx, track);
       drawSeams(ctx, track);
       drawStartLine(ctx, track);
+      ctx.restore();
     }
 
     return { canvas: canvas, width: W, height: H };

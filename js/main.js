@@ -93,8 +93,16 @@
     } catch (err) { scene = null; }
     try { input = window.RaceInput ? window.RaceInput.createInput() : null; } catch (err) { input = null; }
     try { audio = window.RaceAudio ? window.RaceAudio.createAudio() : null; } catch (err) { audio = null; }
-    // 3D 渲染器：缺 three.js / WebGL 不可用时留空，draw() 回落 2D
-    try { gl = (window.RaceGL && canvas) ? window.RaceGL.create(canvas, track) : null; } catch (err) { gl = null; }
+    // 3D 渲染器：缺 three.js / WebGL 不可用时留空，draw() 回落 2D。
+    // 失败原因必须留下痕迹——静默回落会表现成「画面正常但完全不对」（曾因一处 ReferenceError 整局掉进 2D 路径）
+    try {
+      gl = (window.RaceGL && canvas) ? window.RaceGL.create(canvas, track) : null;
+    } catch (err) {
+      gl = null;
+      var DBG0 = window.__DBG__ || (window.__DBG__ = {});
+      DBG0.glError = 'RaceGL.create: ' + (err && err.message ? err.message : String(err));
+      if (window.console && console.error) console.error('[RaceGL] 3D 初始化失败，回落到 2D：', err);
+    }
     if (window.RaceGLCars && gl) window.RaceGLCars.attach(gl, track);
     // 脱轨飞行接上 cannon 刚体（缺任一模块时保留内置抛体）
     if (window.RaceFlightPhysics && window.RaceCar && window.RaceCar.setFlightHooks) { window.RaceCar.setFlightHooks(window.RaceFlightPhysics.create()); }

@@ -302,3 +302,55 @@
   rAF 停摆、`screenshot` 一律 `surface preparation timed out`。本轮只在改形状**之前**拿到过全赛道 3D 截图
   （确认包围盒不越界）。护栏条带与桥墩避让由 `_debug/_bridge-audit.js` 俯视校验 + 复用已验过的 `pushQuadStrip`，
   但仍建议人工开一次浏览器看一眼桥面。
+
+## 2026-10-28 第八轮：修「地图不在画面中」（3D 静默回落 2D + 2D 取景错位）
+
+用户截图里赛道只剩下左上角一小截、地面木板是直角网格没有透视、路面没有路肩和护栏——
+这不是 3D 场景，是 **2D 兜底路径**。两个独立缺陷叠在一起：
+
+### 缺陷 A：`RaceGL.create` 抛错，整局被静默降级到 2D
+- 第七轮清理未用变量时把 `var off` 从 `buildBridge` 的声明里删了，但桥墩循环仍在
+  `off = halfW * sides[si];` 赋值。`gl.js` 顶部是 `'use strict'`，于是抛
+  `ReferenceError: off is not defined`。
+- `main.js` 的 `try { gl = RaceGL.create(...) } catch { gl = null; }` 把异常吞掉，
+  画面照常跑（2D 兜底），所以看起来"游戏正常，只是地图不对"。
+- 修：`var off` 补回循环内；`main.js` 失败时 `console.error` + 写 `window.__DBG__.glError`，
+  不再静默。
+
+### 缺陷 B：2D 兜底的赛道层没有平移到画布中心
+- 赛道点与车辆坐标的原点在**赛道中心**（坐标有正有负，如 x ∈ [-422, 466]），
+  而 `scene.js` 的画布是 0..1280 / 0..720。`drawTrack` / `drawSlots` / `drawSeams` /
+  `drawStartLine` 都直接用原始坐标画，于是只有"正坐标象限"那一块落在画布内——
+  正好是用户截图里左上角那一截。地毯/地板是按画布坐标居中画的，所以背景看着正常，
+  更掩盖了这一层错位。
+- 两条赛道都有这个问题（figure8 也是原点居中），属于长期存在、只在 WebGL 不可用时
+  才暴露的缺陷。
+- 修：`js/scene.js` 的赛道层整体 `translate(W/2, H/2)`；`js/render.js` 的车辆绘制用
+  同一个平移量（新增 `ORIGIN_X` / `ORIGIN_Y`）。两处必须同源，否则车会离开路面。
+
+### 顺带修掉：`gl.setTrack` 根本不存在
+- `api.setTrack` 挂在模块对象 `RaceGL` 上，而 `api.create()` 返回的对象里没有它。
+  `main.js` 用 `if (gl && typeof gl.setTrack === 'function')` 守卫，条件永远为假——
+  **切换赛道时 3D 场景从来不会重建**，只是名字和 2D 底图变了。
+- 修：把 `setTrack` 抽成局部函数，同时挂到 `RaceGL.setTrack` 和 `create()` 返回对象
+  （后者会同步 `gl.track`），返回对象另外补 `trackGroup`。
+
+### 新增的回归网（这次的两个缺陷都能被它们拦住）
+- `test/gl-scene.js` + 测试用例 7：用最小 THREE 桩真正跑 `RaceGL.create` 与 `setTrack`。
+  gl.js 的严格模式错误、`setTrack` 缺失、`setTrack` 不重建（按顶点数变化判定）全部会失败。
+  已做变异测试：把 `off` 改回未声明 → 用例报 `ReferenceError: off is not defined`；
+  把返回对象的 `setTrack` 删掉 → 用例报「缺少 setTrack」。
+- 测试用例 8：两条赛道按画布中心平移后，连同路肩余量必须完整落在 1280×720 内。
+- `_debug/_gl-smoke.js` 是同一套 harness 的命令行壳。
+- 脚本版本 `?v=6` → `?v=7`。
+
+### 验证
+- `node --test test/race.test.js`：8/8（新增两条）
+- `_boot-sim` 全流程通过；`_gl-smoke all` 两条赛道通过
+- `_derail-probe` figure8 20/20、attic 20/20；`_pinch-audit` 与 `_bridge-audit` 数字不变
+
+### 仍未完成
+- 浏览器实机确认（本轮会话的 IAB 面板进入后台后 `document.visibilityState === 'hidden'`，
+  rAF 停摆、`screenshot` 全部 `surface preparation timed out`，后续连标签页都被回收）。
+  请强制刷新（脚本已升到 `?v=7`）后确认：① 是 3D 透视画面 ② 有灰色护栏与红白路肩
+  ③ 切换赛道后 3D 赛道跟着换。若又变成平面无透视画面，看控制台是否有 `[RaceGL]` 报错。

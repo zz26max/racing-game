@@ -188,3 +188,42 @@ test('赛道注册表：listTracks 返回双赛道，未知 id 回落 8 字环�
   const fallback = trackMod.createTrack('不存在的赛道');
   assert.equal(fallback.id, 'figure8', '未知 id 应回落 figure8');
 });
+
+// 7) 3D 场景：两条赛道都能建出来，且 setTrack 真的重建
+// 说明：gl.js 在 'use strict' 下跑，任何未声明的变量都会让 RaceGL.create 抛错，
+// 而 main.js 会静默回落到 2D——画面"还在跑"，实际整条赛道都没有 3D。
+// 曾经因为桥墩循环里一个漏声明的 off 把整局打回 2D，地图直接跑到画面外。
+test('3D 场景：两条赛道都能构建，create() 暴露 setTrack 且切换后真的重建几何', () => {
+  const { buildScene } = require('./gl-scene.js');
+  for (const id of ['figure8', 'attic']) {
+    const r = buildScene(id);
+    assert.ok(r.meshes >= 4, id + ' 至少要有 4 个网格，实际 ' + r.meshes);
+    assert.ok(r.tris >= 100, id + ' 至少要有 100 个三角面，实际 ' + r.tris);
+    assert.ok(r.switchedVerts > 0, id + ' setTrack 之后赛道分组里没有几何');
+  }
+});
+
+// 8) 画面取景：2D 兜底把赛道层平移到画布中心后，两条赛道都必须完整落在 1280×720 内
+// 说明：赛道坐标原点在赛道中心（有正有负），画布是 0..W / 0..H。scene.js 的赛道层与
+// render.js 的车辆沿用同一个平移量；漏掉平移时整条赛道会跑到画布左上角外面
+// （WebGL 不可用回落 2D 时暴露成「地图不在画面中」）。
+test('画面取景：两条赛道平移到画布中心后完整落在 1280×720 内', () => {
+  const sceneMod = require('../js/scene.js');
+  const W = sceneMod.width, H = sceneMod.height;
+  const ox = W / 2, oy = H / 2;
+  for (const id of ['figure8', 'attic']) {
+    const track = trackMod.createTrack(id);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const p of track.points) {
+      if (p.x < x0) x0 = p.x;
+      if (p.x > x1) x1 = p.x;
+      if (p.y < y0) y0 = p.y;
+      if (p.y > y1) y1 = p.y;
+    }
+    const pad = track.width / 2 + 8;   // 路面半宽 + 护栏/路肩余量
+    assert.ok(x0 + ox - pad >= 0, id + ' 左侧出画：' + (x0 + ox - pad).toFixed(0));
+    assert.ok(x1 + ox + pad <= W, id + ' 右侧出画：' + (x1 + ox + pad).toFixed(0));
+    assert.ok(y0 + oy - pad >= 0, id + ' 上方出画：' + (y0 + oy - pad).toFixed(0));
+    assert.ok(y1 + oy + pad <= H, id + ' 下方出画：' + (y1 + oy + pad).toFixed(0));
+  }
+});

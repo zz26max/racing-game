@@ -104,6 +104,7 @@ node --test test/race.test.js
 node -e "require('./test/race.test.js')"
 
 # 四个回归探针
+node _debug/_gl-smoke.js                # 3D 场景构建冒烟：用 THREE 桩跑通 RaceGL.create + setTrack（等价于测试用例 7）
 node _debug/_pinch-audit.js             # 阁楼赛道穿模审计：非邻域中心线最近距离 + 每 200px 窗口最小曲率半径
 node _debug/_bridge-audit.js            # 桥体装饰摆放：护栏覆盖范围、桥墩是否落在下层路基上
 node _debug/_turtle-solve.js            # 赛道 turtle 命令的两段直道闭合求解（改形状后先跑它）
@@ -122,7 +123,9 @@ node _debug/_occlusion-probe.js         # 固定机位下桥下段的遮挡区�
 ✔ 比赛：两车全油门 70 秒内完赛，冠军跑满 3 圈且排名第一
 ✔ 阁楼赛道：几何合法，治理驾驶 150 秒内完赛 3 圈且零脱轨
 ✔ 赛道注册表：listTracks 返回双赛道，未知 id 回落 8 字环道
-tests 6 / pass 6 / fail 0
+✔ 3D 场景：两条赛道都能构建，create() 暴露 setTrack 且切换后真的重建几何
+✔ 画面取景：两条赛道平移到画布中心后完整落在 1280×720 内
+tests 8 / pass 8 / fail 0
 
 _derail-probe（2026-10-28，阁楼几何重排后）：figure8 20/20、attic 20/20 通过
   起跳外沿最大 44.50px（护栏内壁 45）——两条赛道都不再嵌入护栏
@@ -141,7 +144,7 @@ _derail-probe（2026-10-28，阁楼几何重排后）：figure8 20/20、attic 20
 - 两条赛道，形状参数（控制点/圆弧）集中在 `js/track.js` 的 `TRACK_DEFS`；阁楼赛道用 turtle 命令描述（`F` 前进 / `L`·`R` 转向），改完先跑 `node _debug/_turtle-solve.js` 让两段直道自动闭合，再由自交/净空断言与 `_pinch-audit.js` 兜底。
 - 结算页不展示逐圈分段时间，只展示总时间与最佳圈。
 - 没有移动端触屏操作，暂只支持键盘双人同屏。
-- 需要支持 WebGL 的浏览器，WebGL 不可用时回落 2D。
+- 需要支持 WebGL 的浏览器，WebGL 不可用时回落 2D。回落时会 `console.error` 并把原因写进 `window.__DBG__.glError`——3D 初始化失败不该是静默的（曾有一处 `ReferenceError` 让整局掉进 2D，观感完全不对）。
 - 3D 脱轨观感（甩出轨迹、越护栏、落地滑行、归位可见性）目前由 `_debug/_derail-probe.js` 做量化验证，浏览器实机连拍仍需人工确认。
 - 桥面黄护栏是连续四边形条带（原先逐段立方体在弯道上会拉出梳齿状缝隙），桥墩落点会避让下层路基；两者由 `_debug/_bridge-audit.js` 俯视校验，3D 实机观感仍建议人工看一眼。
 - 无 WebGL 时的 2D 兜底路径仍走 `js/car.js` 里的旧抛体参数，观感与 3D 飞行不一致。

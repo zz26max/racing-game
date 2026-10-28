@@ -533,7 +533,7 @@
         h = elev(track, s);
         if (!(h > 0)) continue;   // 平地处不立墩
         p = track.sampleAt(s);
-        off = halfW * sides[si];
+        var off = halfW * sides[si];
         var px = p.x - p.ty * off, pz = p.y + p.tx * off;
         if (pierHitsOtherRoad(px, pz)) continue;
         mesh = new THREE.Mesh(new THREE.CylinderGeometry(PIER_RADIUS, PIER_RADIUS, h, PIER_SEGMENTS), pierMat);
@@ -706,8 +706,12 @@
       activeScene = null;
     }
 
+    var api3d = null;
+
     // 切换赛道：释放旧赛道几何并按新赛道重建（车模与灯光保留）
-    api.setTrack = function (tk) {
+    // 同时挂到模块（RaceGL.setTrack）与 create() 的返回对象（gl.setTrack）：
+    // main.js 用的是后者，早期只挂了前者，导致切赛道时 3D 场景静默不重建。
+    function setTrack(tk) {
       if (!trackGroup) return;
       var children = trackGroup.children.slice();
       for (var i = 0; i < children.length; i++) {
@@ -723,8 +727,10 @@
         }
       }
       api.track = tk || null;
+      if (api3d) api3d.track = tk || null;
       buildTrackInto(trackGroup, tk);
-    };
+    }
+    api.setTrack = setTrack;
 
     // 画布尺寸随 CSS 盒变化
     function resize() {
@@ -747,13 +753,17 @@
       renderer.render(scene, camera);
     }
 
-    return {
+    api3d = {
       scene: scene,
       camera: camera,
       renderer: renderer,
       render: render,
-      resize: resize
+      resize: resize,
+      setTrack: setTrack,
+      trackGroup: trackGroup,
+      track: track || null
     };
+    return api3d;
   };
 
   root.RaceGL = api;
