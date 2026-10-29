@@ -25,43 +25,62 @@
   // 刚体位姿 → 车模位姿的复用临时量（每帧每车都要算，避免逐帧新建对象）
   var _q = null, _bottom = null;
 
-  // 每辆车的颜色与车头/车尾特征：P1 红车带尾翼，P2 蓝车带车头楔形
+  // 每辆车的颜色与特征件：P1 红车（车顶米白 + 尾翼大），P2 蓝车（车头楔形 + 尾翼小）
+  // 结构：车身 → 引擎盖（下斜）→ 车头条纹 → 风挡（后仰）→ 座舱（玻璃带）→ 车顶
+  //       → 4×轮胎+轮毂 → 侧裙 → 尾灯 → 尾翼 → 特征件
   function makeCar(color, num, T) {
     var group = new T.Group();
     var wheels = [];
+    var paint = new T.MeshStandardMaterial({ color: color, roughness: 0.45, flatShading: true });
+    var dark = new T.MeshStandardMaterial({ color: 0x2b2320, roughness: 0.5, flatShading: true });
+    var cream = new T.MeshStandardMaterial({ color: 0xE9DCC4, roughness: 0.55, flatShading: true });
+    var tire = new T.MeshStandardMaterial({ color: 0x1b1714, roughness: 0.6, flatShading: true });
+    var hub = new T.MeshStandardMaterial({ color: 0xb9b2a4, roughness: 0.4, metalness: 0.25, flatShading: true });
 
-    var body = new T.Mesh(
-      new T.BoxGeometry(BODY_W, BODY_H, BODY_D),
-      new T.MeshStandardMaterial({ color: color, roughness: 0.45 })
-    );
-    body.position.y = BODY_Y;
-    body.castShadow = true;
-    group.add(body);
+    function box(w, h, d, mat, x, y, z, rz) {
+      var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat);
+      m.position.set(x, y, z);
+      if (rz) m.rotation.z = rz;
+      m.castShadow = true;
+      group.add(m);
+      return m;
+    }
 
-    var cabin = new T.Mesh(
-      new T.BoxGeometry(CABIN_W, CABIN_H, CABIN_D),
-      new T.MeshStandardMaterial({ color: 0x2b2320, roughness: 0.45 })
-    );
-    cabin.position.set(0, CABIN_Y, CABIN_Z);
-    cabin.castShadow = true;
-    group.add(cabin);
+    // 主车身与侧裙
+    box(BODY_W, BODY_H, BODY_D, paint, 0, BODY_Y, 0);
+    box(30, 3, 2.5, dark, 0, 3.5, 12.2);    // 侧裙
+    box(30, 3, 2.5, dark, 0, 3.5, -12.2);
 
-    var wheelMat = new T.MeshStandardMaterial({ color: 0x1b1714, roughness: 0.45 });
+    // 引擎盖：向下斜向车头；盖上一条米白赛车条纹
+    box(13, 4.5, 18, paint, 17, 9.6, 0, -0.10);
+    box(13, 1.2, 5, cream, 17.5, 11.6, 0, -0.10);
+
+    // 风挡：后仰的玻璃带；座舱：玻璃带 + 米白车顶
+    box(3.5, 7.5, 15, dark, 8.5, 15, 0, 0.42);
+    box(CABIN_W, CABIN_H, CABIN_D, dark, 0, CABIN_Y, CABIN_Z);
+    box(15, 3, 14, cream, -1, 19.6, 0);
+
+    // 轮胎 + 浅色轮毂（轮毂比胎略宽，端面可见）
     var wheelGeo = new T.CylinderGeometry(WHEEL_R, WHEEL_R, WHEEL_LEN, WHEEL_SEG);
+    var hubGeo = new T.CylinderGeometry(WHEEL_R * 0.48, WHEEL_R * 0.48, WHEEL_LEN + 0.8, WHEEL_SEG);
     var signs = [-1, 1];
     for (var xi = 0; xi < signs.length; xi++) {
       for (var zi = 0; zi < signs.length; zi++) {
-        var wheel = new T.Mesh(wheelGeo, wheelMat);
+        var wheel = new T.Mesh(wheelGeo, tire);
         wheel.rotation.x = Math.PI / 2;
         wheel.position.set(signs[xi] * WHEEL_X, WHEEL_Y, signs[zi] * WHEEL_Z);
         wheel.castShadow = true;
         group.add(wheel);
         wheels.push(wheel);
+        var cap = new T.Mesh(hubGeo, hub);
+        cap.rotation.x = Math.PI / 2;
+        cap.position.set(signs[xi] * WHEEL_X, WHEEL_Y, signs[zi] * WHEEL_Z);
+        group.add(cap);
       }
     }
     group.userData.wheels = wheels;
 
-    // 车头灯：两盏 emissive 小方块，左右对称
+    // 车头灯：两盏 emissive 小方块
     var lightMat = new T.MeshStandardMaterial({
       color: 0xffe0a0,
       emissive: 0xffe0a0,
@@ -75,24 +94,11 @@
       group.add(lamp);
     }
 
-    // P1 尾翼 / P2 车头楔形（num 为 1 或 2）
-    if (num === 1) {
-      var spoiler = new T.Mesh(
-        new T.BoxGeometry(SPOILER_W, SPOILER_H, SPOILER_D),
-        new T.MeshStandardMaterial({ color: color, roughness: 0.45 })
-      );
-      spoiler.position.set(SPOILER_X, SPOILER_Y, 0);
-      spoiler.castShadow = true;
-      group.add(spoiler);
-    } else {
-      var wedge = new T.Mesh(
-        new T.BoxGeometry(WEDGE_W, WEDGE_H, WEDGE_D),
-        new T.MeshStandardMaterial({ color: color, roughness: 0.45 })
-      );
-      wedge.position.set(WEDGE_X, WEDGE_Y, 0);
-      wedge.castShadow = true;
-      group.add(wedge);
-    }
+    // 尾翼：两车都有，P1 更高更大；P2 保留车头楔形特征
+    box(SPOILER_W + (num === 1 ? 1 : 0), SPOILER_H + (num === 1 ? 1.5 : 0), SPOILER_D, paint,
+      SPOILER_X, SPOILER_Y + (num === 1 ? 2 : 0), 0);
+    box(2, 4, SPOILER_D - 6, dark, SPOILER_X + (num === 1 ? 2.5 : 2), SPOILER_Y - 2.5, 0);
+    if (num === 2) box(WEDGE_W, WEDGE_H, WEDGE_D, paint, WEDGE_X, WEDGE_Y, 0);
 
     // 收集本车所有材质（去重）：复位期只改透明度，不再整辆车隐显
     var mats = [];

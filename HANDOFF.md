@@ -565,3 +565,33 @@
 
 ### 待真机
 - 尘粒大小/透明度（0.32 峰值）、发射率（80ms）是否克制；胎噪峰值 0.035 与攻角 0.18s 听感。
+
+## 2026-10-29 第十六轮：车模精修（程序化）+ 导入模型评估
+
+### 用户问题：直接导入玩具车模型怎么样？
+调研结论（poly.pizza/Quaternius、Kenney 均为 CC0 GLTF——授权不是障碍）：
+- **file:// 是硬障碍**：GLTFLoader 走 fetch，双击打开的页面被同源策略拦死。出路三条：
+  本地服务器（破坏双击即玩）/ 浏览器安全旗标（不现实）/ GLB 转 base64 内嵌 +
+  `GLTFLoader.parse()`——但 r149 的 three.min.js 核心不含 GLTFLoader（examples/js 已移除），
+  需改 ESM 加载或自写迷你 GLB 解析器，外加轴向/尺度归一化与体积 +33%。
+- 收益存疑：车在画面里约 40 逻辑像素，网格细节大多不可见；「无素材文件、无构建步骤」
+  是项目卖点。
+- 结论：**现阶段不导入**。将来若要：Kenney Car Kit / Quaternius CC0 GLB → 离线烘成
+  内嵌 JS 数组 → 自写 ~150 行迷你解析器（DataView 读 JSON+BIN chunk → BufferGeometry），
+  file:// 安全。工作量约一天，作可选升级路径。
+
+### 本轮实施：程序化车模精修（makeCar 重写，零素材）
+- 车身保留原尺寸占位（物理对齐不变），新增细节件：
+  引擎盖（-0.10 rad 下斜）+ 米白赛车条纹、后仰风挡（0.42 rad）、座舱玻璃带 + 米白车顶、
+  浅色轮毂（比胎宽 0.8 端面可见）、两侧侧裙、双色尾翼（P1 更高更大 + 支柱）、
+  P2 保留车头楔形。全部平面着色（flatShading）。
+- 材质收敛为 5 个共享实例（paint/dark/cream/tire/hub），traverse 收集不受影响。
+- 回归网：test/gl-scene.js 的 THREE 桩补 userData/traverse/CircleGeometry/getWorldPosition，
+  冒烟流程加载 gl-cars.js 并 attach——makeCar 的全部几何/材质调用与「车 Group ≥8 子件」
+  断言进回归（此前 makeCar 只在浏览器里跑过，桩测试零覆盖）。
+- 脚本版本 ?v=14 → ?v=15。
+
+### 验证
+- node --test 13/13；_boot-sim 全流程；_gl-smoke all（含车模冒烟）通过。
+- 视觉效果需人工确认（本沙箱无法截图 3D）：重点看引擎盖斜面/风挡仰角的比例，
+  参数都在 makeCar 顶部的 box(...) 调用里，一句话可调。

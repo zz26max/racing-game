@@ -31,8 +31,11 @@ function makeThreeStub() {
       this.rotation = { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } };
       this.scale = new Vector3(1, 1, 1);
       this.children = [];
+      this.userData = {};
       this.castShadow = false;
       this.receiveShadow = false;
+      this.material = null;
+      this.geometry = null;
     }
     add() {
       for (var i = 0; i < arguments.length; i++) this.children.push(arguments[i]);
@@ -43,6 +46,14 @@ function makeThreeStub() {
       if (i >= 0) this.children.splice(i, 1);
       return this;
     }
+    traverse(fn) {
+      fn(this);
+      for (var i = 0; i < this.children.length; i++) {
+        var c = this.children[i];
+        if (c && typeof c.traverse === 'function') c.traverse(fn);
+      }
+    }
+    getWorldPosition(v) { if (v) v.set(this.position.x, this.position.y, this.position.z); return v; }
   }
   class Group extends Object3D { constructor() { super(); rec('Group'); } }
   class Scene extends Object3D { constructor() { super(); rec('Scene'); this.background = null; } }
@@ -80,6 +91,7 @@ function makeThreeStub() {
   class PlaneGeometry { constructor(w, h) { rec('PlaneGeometry'); this.w = w; this.h = h; } }
   class BoxGeometry { constructor(w, h, d) { rec('BoxGeometry'); this.w = w; this.h = h; this.d = d; } }
   class CylinderGeometry { constructor(r1, r2, h, seg) { rec('CylinderGeometry'); this.h = h; } }
+  class CircleGeometry { constructor(r, seg) { rec('CircleGeometry'); } }
   class Material {
     constructor(p) { this.disposed = false; Object.assign(this, p || {}); }
     dispose() { this.disposed = true; }
@@ -113,7 +125,7 @@ function makeThreeStub() {
   return {
     calls,
     Scene, Group, Mesh, BufferGeometry, Float32BufferAttribute,
-    PlaneGeometry, BoxGeometry, CylinderGeometry,
+    PlaneGeometry, BoxGeometry, CylinderGeometry, CircleGeometry,
     MeshStandardMaterial: Material, MeshBasicMaterial: Material,
     PerspectiveCamera, WebGLRenderer,
     HemisphereLight: Light, DirectionalLight: Light,
@@ -167,6 +179,20 @@ function statsOf(root) {
   return { meshes, verts, tris };
 }
 
+// 在场景树里找车 Group（makeCar 产出的组：含 wheels userData 且子件最多）
+function findCarGroup(sceneRoot) {
+  let best = null, bestN = 0;
+  (function walk(node) {
+    if (!node) return;
+    if (node.userData && node.userData.wheels && node.children.length > bestN) {
+      best = node; bestN = node.children.length;
+    }
+    const kids = node.children || [];
+    for (let i = 0; i < kids.length; i++) walk(kids[i]);
+  })(sceneRoot);
+  return best;
+}
+
 function run(trackId) {
   const THREE = makeThreeStub();
   const sandbox = {
@@ -193,11 +219,22 @@ function run(trackId) {
   load('js/util.js');
   load('js/track.js');
   load('js/gl.js');
+  // gl-cars 一并冒烟：makeCar 的全部几何/材质调用都要能过桩
+  load('js/gl-cars.js');
 
   const track = sandbox.RaceTrack.createTrack(trackId);
   const canvas = makeCanvas(1280, 720);
   const gl = sandbox.RaceGL.create(canvas, track);
   if (!gl) throw new Error('RaceGL.create 返回空');
+
+  // 车模冒烟：makeCar 走一遍（几何/材质桩），车 Group 必须有实际子件
+  if (typeof sandbox.RaceGLCars !== 'undefined' && typeof sandbox.RaceGLCars.attach === 'function') {
+    const carsGl = sandbox.RaceGLCars.attach(gl, track);
+    const carGroup = carsGl && carsGl.scene ? findCarGroup(carsGl.scene) : null;
+    if (!carGroup || carGroup.children.length < 8) {
+      throw new Error('车模子件过少：' + (carGroup ? carGroup.children.length : '未找到车 Group'));
+    }
+  }
 
   // 统计网格/顶点/三角面，确认真的建出了东西
   const stats = statsOf(gl.scene);
