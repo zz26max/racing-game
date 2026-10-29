@@ -25,9 +25,43 @@
   // 刚体位姿 → 车模位姿的复用临时量（每帧每车都要算，避免逐帧新建对象）
   var _q = null, _bottom = null;
 
+  // 圆角矩形 Shape（挤出用，中心对称）
+  function roundedShape(T, w, h, r) {
+    var sh = new T.Shape();
+    var x = -w / 2, y = -h / 2;
+    sh.moveTo(x + r, y);
+    sh.lineTo(x + w - r, y);
+    sh.quadraticCurveTo(x + w, y, x + w, y + r);
+    sh.lineTo(x + w, y + h - r);
+    sh.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    sh.lineTo(x + r, y + h);
+    sh.quadraticCurveTo(x, y + h, x, y + h - r);
+    sh.lineTo(x, y + r);
+    sh.quadraticCurveTo(x, y, x + r, y);
+    return sh;
+  }
+
+  // 圆角平板：沿轮廓挤出 depth + 双面倒角 bevel，放平（挤出方向 → +Y）
+  // —— 车身/座舱/车顶都用它：圆角 + 倒角消灭"方块感"
+  function slab(T, w, h, depth, r, bevel, mat) {
+    var geo = new T.ExtrudeGeometry(roundedShape(T, w, h, r), {
+      depth: depth,
+      bevelEnabled: true,
+      bevelThickness: bevel,
+      bevelSize: bevel,
+      bevelSegments: 2,
+      steps: 1,
+      curveSegments: 8
+    });
+    var m = new T.Mesh(geo, mat);
+    m.rotation.x = -Math.PI / 2;
+    m.castShadow = true;
+    return m;
+  }
+
   // 每辆车的颜色与特征件：P1 红车（车顶米白 + 尾翼大），P2 蓝车（车头楔形 + 尾翼小）
-  // 结构：车身 → 引擎盖（下斜）→ 车头条纹 → 风挡（后仰）→ 座舱（玻璃带）→ 车顶
-  //       → 4×轮胎+轮毂 → 侧裙 → 尾灯 → 尾翼 → 特征件
+  // 结构：圆角车身 → 引擎盖 → 盖面条纹 → 风挡 → 座舱 → 车顶 → 4×轮胎+轮毂
+  //       → 侧裙 → 尾灯 → 尾翼 → 特征件（P1 大尾翼 / P2 楔形）
   function makeCar(color, num, T) {
     var group = new T.Group();
     var wheels = [];
@@ -46,19 +80,31 @@
       return m;
     }
 
-    // 主车身与侧裙
-    box(BODY_W, BODY_H, BODY_D, paint, 0, BODY_Y, 0);
-    box(30, 3, 2.5, dark, 0, 3.5, 12.2);    // 侧裙
-    box(30, 3, 2.5, dark, 0, 3.5, -12.2);
+    // 圆角车身（44×26、圆角 9、倒角 1.6，高 ~12）；底面贴近轮顶
+    var body = slab(T, 44, 26, 9, 9, 1.6, paint);
+    body.position.y = 3.6;
+    group.add(body);
 
-    // 引擎盖：向下斜向车头；盖上一条米白赛车条纹
-    box(13, 4.5, 18, paint, 17, 9.6, 0, -0.10);
-    box(13, 1.2, 5, cream, 17.5, 11.6, 0, -0.10);
+    // 侧裙
+    box(30, 3, 2.5, dark, 0, 3.2, 12.4);
+    box(30, 3, 2.5, dark, 0, 3.2, -12.4);
 
-    // 风挡：后仰的玻璃带；座舱：玻璃带 + 米白车顶
-    box(3.5, 7.5, 15, dark, 8.5, 15, 0, 0.42);
-    box(CABIN_W, CABIN_H, CABIN_D, dark, 0, CABIN_Y, CABIN_Z);
-    box(15, 3, 14, cream, -1, 19.6, 0);
+    // 引擎盖（前端叠在车身上）+ 米白条纹
+    var hood = slab(T, 15, 19, 3.2, 6, 1.1, paint);
+    hood.position.set(16, 13.4, 0);
+    group.add(hood);
+    var stripe = slab(T, 12.5, 4.5, 0.9, 2, 0.35, cream);
+    stripe.position.set(16.5, 17.4, 0);
+    group.add(stripe);
+
+    // 风挡（后仰玻璃带）→ 座舱玻璃带 → 米白车顶
+    box(3.5, 7.5, 15, dark, 7.5, 15.5, 0, 0.42);
+    var cabin = slab(T, 19, 16, 5.5, 6, 1.2, dark);
+    cabin.position.set(-1.5, 12.6, 0);
+    group.add(cabin);
+    var roof = slab(T, 14.5, 12.5, 1.8, 5, 0.7, cream);
+    roof.position.set(-1.5, 19.4, 0);
+    group.add(roof);
 
     // 轮胎 + 浅色轮毂（轮毂比胎略宽，端面可见）
     var wheelGeo = new T.CylinderGeometry(WHEEL_R, WHEEL_R, WHEEL_LEN, WHEEL_SEG);
@@ -94,11 +140,13 @@
       group.add(lamp);
     }
 
-    // 尾翼：两车都有，P1 更高更大；P2 保留车头楔形特征
-    box(SPOILER_W + (num === 1 ? 1 : 0), SPOILER_H + (num === 1 ? 1.5 : 0), SPOILER_D, paint,
-      SPOILER_X, SPOILER_Y + (num === 1 ? 2 : 0), 0);
-    box(2, 4, SPOILER_D - 6, dark, SPOILER_X + (num === 1 ? 2.5 : 2), SPOILER_Y - 2.5, 0);
-    if (num === 2) box(WEDGE_W, WEDGE_H, WEDGE_D, paint, WEDGE_X, WEDGE_Y, 0);
+    // 尾翼：圆角薄板 + 双支柱；P1 更高更大
+    var wing = slab(T, 3.4, 22, 2, 1.2, 0.5, paint);
+    wing.position.set(SPOILER_X, SPOILER_Y + (num === 1 ? 2.5 : 1), 0);
+    group.add(wing);
+    box(2, 4, SPOILER_D - 6, dark, SPOILER_X + 2.2, SPOILER_Y - 2.5, 0);
+    // P2 特征件：车头楔形（前压鼻）
+    if (num === 2) box(WEDGE_W, WEDGE_H, WEDGE_D, paint, WEDGE_X, WEDGE_Y, 0, -0.18);
 
     // 收集本车所有材质（去重）：复位期只改透明度，不再整辆车隐显
     var mats = [];
@@ -257,12 +305,14 @@
     gl.scene.add(g1);
     gl.scene.add(g2);
 
-    // ---- 灰尘尾迹（3D）：每车一小池地面圆片，打滑/起步烧胎时从车尾扬起 ----
-    var DUST_N = 16;
-    var DUST_TAN = 0xD4C5A8;
+    // ---- 灰尘尾迹（3D）：每车一小池地面圆片，巡航淡拖尾 / 打滑浓尘 / 落地尘爆 ----
+    var DUST_N = 20;
+    var DUST_TAN = 0xE0D2B4;
+    var FLY_GUARD = 1.7;
     var dustGeo = new T.CircleGeometry(1, 10);
-    var dustPool = [];          // { mesh, age, life, vx, vz, size }
+    var dustPool = [];          // { mesh, age, life, vx, vz, size, peak }
     var dustClock = [0, 0];
+    var dustPrevFly = [0, 0];
     var dustLastT = null;
     (function buildDust() {
       for (var i = 0; i < DUST_N * 2; i++) {
@@ -288,38 +338,45 @@
       return best;
     }
 
-    function dustSpawn(car, tk, i) {
+    function dustSpawn(car, tk, mode) {
       var d = dustPool[dustSlot()];
       var back = tk.pointAt(Math.max(0, (Number(car.s) || 0) - 16), car.lane === -1 ? -1 : 1);
       var tan = tangentAt(tk, car.s, back);
       var elev = (typeof tk.elevationAt === 'function') ? Number(tk.elevationAt(car.s)) : 0;
       if (!isFinite(elev)) elev = 0;
+      var spread = mode === 'burst' ? 16 : 6;
+      var speedBoost = mode === 'slip' ? 1.35 : 1;
       d.mesh.position.set(
-        back.x - tan.tx * 6 + (Math.random() - 0.5) * 6,
+        back.x - tan.tx * 6 + (Math.random() - 0.5) * spread,
         elev + 0.6,
-        back.y - tan.ty * 6 + (Math.random() - 0.5) * 6
+        back.y - tan.ty * 6 + (Math.random() - 0.5) * spread
       );
-      d.vx = -tan.tx * 26 + (Math.random() - 0.5) * 26;
-      d.vz = -tan.ty * 26 + (Math.random() - 0.5) * 26;
-      d.size = 3 + Math.random() * 2.5;
+      d.vx = -tan.tx * 24 * speedBoost + (Math.random() - 0.5) * 26;
+      d.vz = -tan.ty * 24 * speedBoost + (Math.random() - 0.5) * 26;
+      d.size = mode === 'slip' ? 4 + Math.random() * 2.6 : (mode === 'burst' ? 4.5 + Math.random() * 2.6 : 2.4 + Math.random() * 1.5);
+      d.peak = mode === 'slip' ? 0.4 : (mode === 'burst' ? 0.38 : 0.15);
       d.age = 0;
-      d.life = 0.5 + Math.random() * 0.3;
+      d.life = mode === 'cruise' ? 0.8 + Math.random() * 0.3 : 0.45 + Math.random() * 0.25;
       d.mesh.visible = true;
     }
 
     function dustUpdate(entries, tk, dt) {
       var i, d;
-      // 发射（克制：侧滑或起步烧胎才扬，每车 80ms 一粒）
       if (entries && tk && typeof tk.pointAt === 'function') {
         for (i = 0; i < 2 && i < entries.length; i++) {
           dustClock[i] -= dt;
           var car = entries[i] && entries[i].car;
-          if (!car || car.derailed || dustClock[i] > 0) continue;
-          var sliding = (Number(car.slip) || 0) > 0.3;
-          var launching = (Number(car.throttle) || 0) > 0.85 && (Number(car.speed) || 0) < 150;
-          if (!sliding && !launching) continue;
-          dustClock[i] = 0.08;
-          dustSpawn(car, tk, i);
+          if (!car) continue;
+          // 落地沿：derailT 越过 FLY_GUARD 炸一圈尘
+          if (car.derailed && dustPrevFly[i] <= FLY_GUARD && Number(car.derailT) > FLY_GUARD) {
+            for (var b = 0; b < 6; b++) dustSpawn(car, tk, 'burst');
+          }
+          dustPrevFly[i] = Number(car.derailT) || 0;
+          if (car.derailed || dustClock[i] > 0) continue;
+          var speed = Number(car.speed) || 0;
+          if ((Number(car.slip) || 0) > 0.3) { dustSpawn(car, tk, 'slip'); dustClock[i] = 0.055; }
+          else if ((Number(car.throttle) || 0) > 0.85 && speed < 150) { dustSpawn(car, tk, 'slip'); dustClock[i] = 0.055; }
+          else if (speed > 40) { dustSpawn(car, tk, 'cruise'); dustClock[i] = 0.09; }
         }
       }
       // 推进
@@ -333,7 +390,7 @@
         d.mesh.position.z += d.vz * dt;
         var sc = d.size * (0.55 + k * 1.5);
         d.mesh.scale.set(sc, sc, 1);
-        d.mesh.material.opacity = 0.3 * (1 - k);
+        d.mesh.material.opacity = d.peak * (1 - k);
       }
     }
 

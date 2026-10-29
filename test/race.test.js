@@ -399,44 +399,19 @@ test('尾迹：打滑扬尘、规模封顶、消亡后归零', () => {
   assert.ok(stats.count > 0, '打滑 1 秒应有尘粒在场上，实际 ' + stats.count);
   assert.ok(stats.count <= stats.max, '尘粒数不得超上限');
 
-  // 停止打滑 + 时间快进：尘粒应全部消亡
+  // 巡航（不打滑、不烧胎，速度 > 40）：应有淡拖尾——"车尾轨迹可见"的常态效果
   car.slip = 0; car.throttle = 0;
-  for (let f = 61; f <= 180; f++) {
+  for (let f = 61; f <= 90; f++) {
     renderMod.draw(ctx, Object.assign({}, state, { time: f * 0.0167 }));
   }
-  assert.equal(renderMod.dustStats().count, 0, '停止打滑 2 秒后尘粒应全部消亡');
-});
+  const cruise = renderMod.dustStats().count;
+  assert.ok(cruise > 0, '巡航时应有淡拖尾，实际 ' + cruise);
+  assert.ok(cruise <= stats.max, '巡航尘粒数不得超上限');
 
-// 12) 灰尘尾迹（2D 路径）：滑行/起步时生成、有上限、随时间消亡
-test('尾迹：打滑扬尘、规模封顶、消亡后归零', () => {
-  const ctx = new Proxy({}, {
-    get(t, p) {
-      if (p === 'measureText') return () => ({ width: 10 });
-      if (typeof t[p] !== 'undefined') return t[p];
-      return () => {};
-    },
-    set(t, p, v) { t[p] = v; return true; }
-  });
-  const track = trackMod.createTrack('figure8');
-  const car = { s: 500, lane: 1, slip: 0.8, throttle: 1, speed: 200, derailed: false, offset: 0, slideSide: 1 };
-  const state = { phase: 'running', scene: null, track: track, muted: false, pressed: [], portrait: false,
-    race: { track: track, laps: 3, elapsed: 0, winner: null,
-      entries: [{ car: car, lap: 0, finished: false }] } };
-
-  // 起步：第一帧建立时间基准
-  renderMod.draw(ctx, Object.assign({}, state, { time: 0 }));
-  // 打滑 1 秒（多帧）：应持续扬尘
-  for (let f = 1; f <= 60; f++) {
+  // 停车（速度归零）：不再发射，存量消亡
+  car.speed = 0;
+  for (let f = 91; f <= 210; f++) {
     renderMod.draw(ctx, Object.assign({}, state, { time: f * 0.0167 }));
   }
-  const stats = renderMod.dustStats();
-  assert.ok(stats.count > 0, '打滑 1 秒应有尘粒在场上，实际 ' + stats.count);
-  assert.ok(stats.count <= stats.max, '尘粒数不得超上限');
-
-  // 停止打滑 + 时间快进：尘粒应全部消亡
-  car.slip = 0; car.throttle = 0;
-  for (let f = 61; f <= 180; f++) {
-    renderMod.draw(ctx, Object.assign({}, state, { time: f * 0.0167 }));
-  }
-  assert.equal(renderMod.dustStats().count, 0, '停止打滑 2 秒后尘粒应全部消亡');
+  assert.equal(renderMod.dustStats().count, 0, '停车 2 秒后尘粒应全部消亡');
 });

@@ -745,9 +745,17 @@
     resize();
     window.addEventListener('resize', resize);
 
-    // 相机：固定 BASE 机位，脱轨也不再后拉（camK 恒为 0）
+    // 相机：固定 BASE 机位 + 脱轨/落地时的短促震动（幅度按帧指数衰减）
+    var shakePow = 0;
+    function shake(power) { shakePow = Math.max(shakePow, Number(power) || 0); }
     function render(race, time) {
       camera.position.set(CAM_BASE_X, CAM_BASE_Y, CAM_BASE_Z);
+      if (shakePow > 0.05) {
+        camera.position.x += (Math.random() - 0.5) * shakePow;
+        camera.position.y += (Math.random() - 0.5) * shakePow * 0.6;
+        camera.position.z += (Math.random() - 0.5) * shakePow;
+        shakePow *= 0.86;
+      }
       camera.lookAt(0, 0, 0);
 
       renderer.render(scene, camera);
@@ -760,6 +768,7 @@
       render: render,
       resize: resize,
       setTrack: setTrack,
+      shake: shake,
       trackGroup: trackGroup,
       track: track || null
     };

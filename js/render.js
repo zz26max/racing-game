@@ -551,17 +551,38 @@
     ctx.closePath();
   }
 
-  // ---- 灰尘尾迹（2D 兜底；克制：只在打滑/起步烧胎时少量扬起）----
-  var dust = [];              // { x, y, vx, vy, age, life, size }
-  var DUST_MAX = 56;
-  var DUST_TAN = '212,197,168';
+  // ---- 灰尘尾迹（2D 兜底；三档：巡航淡拖尾 / 打滑浓尘 / 落地尘爆）----
+  var dust = [];              // { x, y, vx, vy, age, life, size, peak }
+  var DUST_MAX = 72;
+  var DUST_TAN = '224,210,180';
+  var FLY_GUARD = 1.7;        // 脱轨飞行截断（= car.js FLY_GUARD），穿越即落地
   var dustClock = [0, 0];     // 每车发射节流
+  var dustPrevFly = [0, 0];   // 每车上帧 derailT（判落地沿）
   var dustLastT = null;
 
   // 供测试观察规模
   function dustStats() { return { count: dust.length, max: DUST_MAX }; }
 
-  // 发射条件：侧滑（slip>0.3）或起步烧胎（大油门低速）；每车 80ms 一粒，全局封顶
+  // 一粒尘：模式决定大小/透明度/寿命
+  function dustSpawn(track, car, mode) {
+    if (dust.length >= DUST_MAX) return;
+    var tan = track.sampleAt(car.s);
+    var back = track.pointAt(Math.max(0, (Number(car.s) || 0) - 16), car.lane === -1 ? -1 : 1);
+    var tx = tan ? tan.tx : 1, ty = tan ? tan.ty : 0;
+    var spread = mode === 'burst' ? 16 : 6;
+    var speedBoost = mode === 'slip' ? 1.35 : 1;
+    dust.push({
+      x: back.x - tx * 6 + (Math.random() - 0.5) * spread,
+      y: back.y - ty * 6 + (Math.random() - 0.5) * spread,
+      vx: -tx * 24 * speedBoost + (Math.random() - 0.5) * 26,
+      vy: -ty * 24 * speedBoost + (Math.random() - 0.5) * 26,
+      age: 0,
+      life: mode === 'cruise' ? 0.8 + Math.random() * 0.3 : 0.45 + Math.random() * 0.25,
+      size: mode === 'slip' ? 4.5 + Math.random() * 3 : (mode === 'burst' ? 5 + Math.random() * 3 : 2.6 + Math.random() * 1.6),
+      peak: mode === 'slip' ? 0.42 : (mode === 'burst' ? 0.4 : 0.15)
+    });
+  }
+
   function updateDust(s, dt) {
     var race = s.race;
     var track = s.track || (race && race.track) || null;
@@ -573,24 +594,17 @@
         dustClock[i] -= dt;
         e = entries[i];
         car = e && e.car;
-        if (!car || car.derailed || dustClock[i] > 0) continue;
-        var sliding = (Number(car.slip) || 0) > 0.3;
-        var launching = (Number(car.throttle) || 0) > 0.85 && (Number(car.speed) || 0) < 150;
-        if (!sliding && !launching) continue;
-        if (dust.length >= DUST_MAX) continue;
-        dustClock[i] = 0.08;
-        var tan = track.sampleAt(car.s);
-        var back = track.pointAt(Math.max(0, (Number(car.s) || 0) - 16), car.lane === -1 ? -1 : 1);
-        var tx = tan ? tan.tx : 1, ty = tan ? tan.ty : 0;
-        dust.push({
-          x: back.x - tx * 6 + (Math.random() - 0.5) * 6,
-          y: back.y - ty * 6 + (Math.random() - 0.5) * 6,
-          vx: -tx * 24 + (Math.random() - 0.5) * 26,
-          vy: -ty * 24 + (Math.random() - 0.5) * 26,
-          age: 0,
-          life: 0.5 + Math.random() * 0.3,
-          size: 3.5 + Math.random() * 2.5
-        });
+        if (!car) continue;
+        // 落地沿：derailT 越过 FLY_GUARD 的那一帧炸一圈尘
+        if (car.derailed && dustPrevFly[i] <= FLY_GUARD && Number(car.derailT) > FLY_GUARD) {
+          for (var b = 0; b < 6; b++) dustSpawn(track, car, 'burst');
+        }
+        dustPrevFly[i] = Number(car.derailT) || 0;
+        if (car.derailed || dustClock[i] > 0) continue;
+        var speed = Number(car.speed) || 0;
+        if ((Number(car.slip) || 0) > 0.3) { dustSpawn(track, car, 'slip'); dustClock[i] = 0.055; }
+        else if ((Number(car.throttle) || 0) > 0.85 && speed < 150) { dustSpawn(track, car, 'slip'); dustClock[i] = 0.055; }
+        else if (speed > 40) { dustSpawn(track, car, 'cruise'); dustClock[i] = 0.09; }
       }
     }
     for (i = dust.length - 1; i >= 0; i--) {
@@ -611,7 +625,7 @@
     for (var i = 0; i < dust.length; i++) {
       var d = dust[i];
       var k = d.age / d.life;
-      ctx.globalAlpha = 0.32 * (1 - k);
+      ctx.globalAlpha = d.peak * (1 - k);
       ctx.fillStyle = 'rgb(' + DUST_TAN + ')';
       ctx.beginPath();
       ctx.arc(d.x, d.y, d.size * (0.55 + k * 1.35), 0, Math.PI * 2);

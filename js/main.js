@@ -388,11 +388,19 @@
   // 救车反馈：saveWindow（超限且已松油）进入即"武装"，gripUse 回落到 <1 的那一刻
   // 播放上行音——把"松油救回来了"从纯 HUD 信息变成可感知事件。脱轨则清除武装（boom 已负责）。
   var saveArmed = [false, false];
+  var FLY_GUARD = 1.7;          // = car.js FLY_GUARD：derailT 越过它即落地
+  var prevDerailT = [0, 0];
   function saveFeedback() {
-    if (!audio || !race || !race.entries) return;
+    if (!race || !race.entries) return;
     for (var i = 0; i < 2 && i < race.entries.length; i++) {
       var car = race.entries[i].car;
       if (!car) { saveArmed[i] = false; continue; }
+      // 镜头震动：脱轨瞬间强震，落地瞬间中震（3D 路径；2D 兜底无相机，自然忽略）
+      var dt2 = Number(car.derailT) || 0;
+      if (car.derailed && prevDerailT[i] === 0 && dt2 > 0 && gl && typeof gl.shake === 'function') gl.shake(9);
+      if (car.derailed && prevDerailT[i] <= FLY_GUARD && dt2 > FLY_GUARD && gl && typeof gl.shake === 'function') gl.shake(5);
+      prevDerailT[i] = dt2;
+      if (!audio) continue;
       if (car.derailed) { saveArmed[i] = false; continue; }
       if (car.saveWindow && car.gripUse >= 1) { saveArmed[i] = true; continue; }
       if (saveArmed[i] && car.gripUse < 1) { audio.save(); saveArmed[i] = false; continue; }
@@ -583,7 +591,7 @@
       hudCtx.textAlign = 'right';
       hudCtx.textBaseline = 'bottom';
       hudCtx.fillStyle = 'rgba(233,220,196,.45)';
-      hudCtx.fillText('build 13 · ' + trackList.length + ' tracks', W - 8, H - 6);
+      hudCtx.fillText('build 14 · ' + trackList.length + ' tracks', W - 8, H - 6);
       hudCtx.restore();
     } else if (typeof window.RaceRender.drawHUD === 'function') {
       window.RaceRender.drawHUD(hudCtx, state);

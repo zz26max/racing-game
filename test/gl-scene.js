@@ -92,6 +92,17 @@ function makeThreeStub() {
   class BoxGeometry { constructor(w, h, d) { rec('BoxGeometry'); this.w = w; this.h = h; this.d = d; } }
   class CylinderGeometry { constructor(r1, r2, h, seg) { rec('CylinderGeometry'); this.h = h; } }
   class CircleGeometry { constructor(r, seg) { rec('CircleGeometry'); } }
+  class Shape {
+    constructor() {}
+    moveTo() {} lineTo() {} quadraticCurveTo() {} bezierCurveTo() {} closePath() {}
+  }
+  class ExtrudeGeometry {
+    constructor(shape, opts) {
+      rec('ExtrudeGeometry');
+      if (!shape || typeof shape.moveTo !== 'function') throw new Error('ExtrudeGeometry: 需要 Shape');
+      if (!opts || !opts.depth) throw new Error('ExtrudeGeometry: 缺 depth');
+    }
+  }
   class Material {
     constructor(p) { this.disposed = false; Object.assign(this, p || {}); }
     dispose() { this.disposed = true; }
@@ -125,7 +136,7 @@ function makeThreeStub() {
   return {
     calls,
     Scene, Group, Mesh, BufferGeometry, Float32BufferAttribute,
-    PlaneGeometry, BoxGeometry, CylinderGeometry, CircleGeometry,
+    PlaneGeometry, BoxGeometry, CylinderGeometry, CircleGeometry, Shape, ExtrudeGeometry,
     MeshStandardMaterial: Material, MeshBasicMaterial: Material,
     PerspectiveCamera, WebGLRenderer,
     HemisphereLight: Light, DirectionalLight: Light,
