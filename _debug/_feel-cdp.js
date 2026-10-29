@@ -285,7 +285,7 @@ const PROBE_SRC = `(function () {
       liftLifts: LIFT.lifts, liftThreshold: LIFT.threshold,
       hookErr: S3.hookErr, errors: (window.__ERRORS__ || []).slice(0, 5),
       glError: (window.__DBG__ && window.__DBG__.glError) || null, webgl: webgl,
-      build: 'v18'
+      build: 'v19'
     };
   };
 })();`;
