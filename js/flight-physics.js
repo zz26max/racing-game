@@ -372,7 +372,7 @@
         var slopeRoot = Number(track.slopeAt(s));
         if (isFinite(slopeRoot) && slopeRoot !== 0) {
           qPitch = new CANNON.Quaternion();
-          qPitch.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), -Math.atan(slopeRoot));
+          qPitch.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), Math.atan(slopeRoot));
         }
       }
       // 先车身系俯仰、再 yaw：q = qYaw × qPitch

@@ -2,14 +2,9 @@
 (function (root) {
   'use strict';
 
-  // 车体尺寸（世界单位）：车身 44×12×26，座舱 20×10×18，轮半径 7、宽 5
-  var BODY_W = 44, BODY_H = 12, BODY_D = 26, BODY_Y = 7;
-  var CABIN_W = 20, CABIN_H = 10, CABIN_D = 18, CABIN_Y = 16, CABIN_Z = -1;
-  var WHEEL_R = 7, WHEEL_LEN = 5, WHEEL_SEG = 16;
-  var WHEEL_X = 15, WHEEL_Y = 7, WHEEL_Z = 11;
-  var LIGHT_W = 3, LIGHT_H = 3, LIGHT_D = 5, LIGHT_X = 22, LIGHT_Y = 8, LIGHT_Z = 7;
-  var SPOILER_W = 3, SPOILER_H = 3, SPOILER_D = 22, SPOILER_X = -22, SPOILER_Y = 14;
-  var WEDGE_W = 8, WEDGE_H = 4, WEDGE_D = 22, WEDGE_X = 21, WEDGE_Y = 9;
+  // 玩具槽车尺寸（世界单位）：全长 44、主体宽 21.4、车顶高 21.3，轮径 16（大脚玩具比例）
+  var WHEEL_R = 8, WHEEL_LEN = 6.2, WHEEL_SEG = 24;
+  var WHEEL_X = 15, WHEEL_Y = 8, WHEEL_Z = 11.4;
 
   var CAR_LIFT = 1;         // 路面抬升（与 gl.js 的路面高度基准一致）
   var CAR_SEAT = 0;         // 车身在路面之上的高度（Group 原点）
@@ -25,51 +20,152 @@
   // 刚体位姿 → 车模位姿的复用临时量（每帧每车都要算，避免逐帧新建对象）
   var _q = null, _bottom = null;
 
-  // 圆角矩形 Shape（挤出用，中心对称）
-  function roundedShape(T, w, h, r) {
-    var sh = new T.Shape();
-    var x = -w / 2, y = -h / 2;
-    sh.moveTo(x + r, y);
-    sh.lineTo(x + w - r, y);
-    sh.quadraticCurveTo(x + w, y, x + w, y + r);
-    sh.lineTo(x + w, y + h - r);
-    sh.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    sh.lineTo(x + r, y + h);
-    sh.quadraticCurveTo(x, y + h, x, y + h - r);
-    sh.lineTo(x, y + r);
-    sh.quadraticCurveTo(x, y, x + r, y);
-    return sh;
+  // 车壳挤出时轮廓会沿法线外扩 bevelSize，贴面件（风挡/条纹）要按这个量抬起才不埋进壳里
+  var BODY_BEVEL = 0.7;
+
+  // 侧面轮廓：一条闭合曲线描述整车剪影——低鼻、长引擎盖、后置座舱、短尾
+  function bodyShape(T) {
+    var s = new T.Shape();
+    s.moveTo(-18.6, 3.2);
+    s.lineTo(15.6, 3.2);
+    s.quadraticCurveTo(21.4, 3.2, 22.2, 7.0);
+    s.quadraticCurveTo(22.6, 9.7, 20.5, 10.4);
+    s.lineTo(12.8, 11.9);
+    s.quadraticCurveTo(9.6, 12.5, 8.2, 14.3);
+    s.lineTo(3.7, 20.2);
+    s.quadraticCurveTo(2.8, 21.3, 1.2, 21.3);
+    s.lineTo(-8.4, 21.3);
+    s.quadraticCurveTo(-10.2, 21.3, -11.4, 20.1);
+    s.lineTo(-16.2, 14.5);
+    s.quadraticCurveTo(-17.3, 13.2, -19.1, 13.2);
+    s.lineTo(-20.6, 13.2);
+    s.quadraticCurveTo(-22.0, 13.2, -22.0, 11.6);
+    s.lineTo(-22.0, 5.4);
+    s.quadraticCurveTo(-22.0, 3.2, -18.6, 3.2);
+    return s;
   }
 
-  // 圆角平板：沿轮廓挤出 depth + 双面倒角 bevel，放平（挤出方向 → +Y）
-  // —— 车身/座舱/车顶都用它：圆角 + 倒角消灭"方块感"
-  function slab(T, w, h, depth, r, bevel, mat) {
-    var geo = new T.ExtrudeGeometry(roundedShape(T, w, h, r), {
-      depth: depth,
-      bevelEnabled: true,
-      bevelThickness: bevel,
-      bevelSize: bevel,
-      bevelSegments: 2,
-      steps: 1,
-      curveSegments: 8
+  // 整车车身：侧面轮廓沿车宽挤出 + 双面倒角（宽 18 + 2×1.7 = 21.4），不再是方块堆叠
+  function bodyMesh(T, mat) {
+    var geo = new T.ExtrudeGeometry(bodyShape(T), {
+      depth: 18, bevelEnabled: true, bevelThickness: 1.7, bevelSize: BODY_BEVEL,
+      bevelSegments: 3, steps: 1, curveSegments: 12
     });
     var m = new T.Mesh(geo, mat);
-    m.rotation.x = -Math.PI / 2;
+    m.position.z = -9;
     m.castShadow = true;
     return m;
   }
 
-  // 每辆车的颜色与特征件：P1 红车（车顶米白 + 尾翼大），P2 蓝车（车头楔形 + 尾翼小）
-  // 结构：圆角车身 → 引擎盖 → 盖面条纹 → 风挡 → 座舱 → 车顶 → 4×轮胎+轮毂
-  //       → 侧裙 → 尾灯 → 尾翼 → 特征件（P1 大尾翼 / P2 楔形）
+  // 轮拱翼子板：以轮胎为心的圆管弧，截面沿车宽压扁成眉檐；端头自然圆收，不露厚切面
+  function fenderMesh(T, mat) {
+    var geo = new T.TorusGeometry(8.9, 0.8, 10, 24, Math.PI - 0.9);
+    var m = new T.Mesh(geo, mat);
+    m.rotation.z = 0.45;
+    m.scale.z = 3.5;
+    m.castShadow = true;
+    return m;
+  }
+
+  // 斜面上的薄板（风挡 / 后窗 / 条纹）：由两点定方向，沿向上法线抬起 offset
+  function slopedPanel(T, x1, y1, x2, y2, w, thick, mat, offset, z) {
+    var dx = x2 - x1, dy = y2 - y1;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var nx = dy / len, ny = -dx / len;
+    if (ny < 0) { nx = -nx; ny = -ny; }
+    var m = new T.Mesh(new T.BoxGeometry(len, thick, w), mat);
+    m.position.set((x1 + x2) / 2 + nx * offset, (y1 + y2) / 2 + ny * offset, z || 0);
+    m.rotation.z = Math.atan2(dy, dx);
+    m.castShadow = true;
+    return m;
+  }
+
+  // 侧窗：前门 + 后侧窗合成一条玻璃带，贴在车壳侧平面 z=±10.7 上（车壳外扩后侧平面仍在该处）
+  function sideWindowShape(T) {
+    var s = new T.Shape();
+    s.moveTo(7.0, 15.0);
+    s.quadraticCurveTo(7.3, 17.4, 4.5, 19.4);
+    s.lineTo(1.2, 19.6);
+    s.lineTo(-8.9, 19.6);
+    s.quadraticCurveTo(-11.2, 19.3, -12.9, 16.6);
+    s.lineTo(-13.5, 15.0);
+    s.lineTo(7.0, 15.0);
+    return s;
+  }
+  function sideWindows(T, mat) {
+    var geo = new T.ExtrudeGeometry(sideWindowShape(T), {
+      depth: 0.4, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.08,
+      bevelSegments: 1, steps: 1, curveSegments: 10
+    });
+    var pair = [];
+    var right = new T.Mesh(geo, mat);
+    right.position.z = 10.24;   // 外表面 = 10.72，略高于车壳侧平面
+    var left = new T.Mesh(geo, mat);
+    left.position.z = -10.64;   // 几何沿 +Z 挤出，左侧直接平移贴面
+    right.castShadow = true;
+    left.castShadow = true;
+    pair.push(right, left);
+    return pair;
+  }
+
+  // 尾翼：翼型截面沿车宽挤出；这样 rotation.z 才是真正的迎角（旧写法在放平后再转 Z 会变成偏航）
+  function wingMesh(T, chord, span, mat) {
+    var s = new T.Shape();
+    var c = chord / 2, t = 0.45;
+    s.moveTo(-c, 0);
+    s.quadraticCurveTo(-c + 0.2, t, -c + 1.1, t);
+    s.lineTo(c - 0.9, t * 0.85);
+    s.quadraticCurveTo(c - 0.1, t * 0.5, c, 0);
+    s.quadraticCurveTo(c - 0.2, -t * 0.8, c - 1.0, -t * 0.9);
+    s.lineTo(-c + 1.0, -t * 0.9);
+    s.quadraticCurveTo(-c, -t * 0.6, -c, 0);
+    var geo = new T.ExtrudeGeometry(s, {
+      depth: span - 0.6, bevelEnabled: true, bevelThickness: 0.3, bevelSize: 0.3,
+      bevelSegments: 2, steps: 1, curveSegments: 8
+    });
+    var m = new T.Mesh(geo, mat);
+    m.position.z = -(span - 0.6) / 2;
+    m.castShadow = true;
+    return m;
+  }
+
+  // 车顶圆标 + 车号：canvas 画透明贴图，俯视机位下看得见的玩具赛车涂装
+  function makeRoundel(T, num, y) {
+    var cv = document.createElement('canvas');
+    cv.width = 128; cv.height = 128;
+    var ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.fillStyle = '#E9DCC4';
+    ctx.beginPath(); ctx.arc(64, 64, 60, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#2b2320';
+    ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(64, 64, 57, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#2b2320';
+    ctx.font = 'bold 84px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(num), 64, 70);
+    var mat = new T.MeshBasicMaterial({ map: new T.CanvasTexture(cv), transparent: true, depthWrite: false });
+    var m = new T.Mesh(new T.PlaneGeometry(6, 6), mat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(-3.4, y, 0);
+    return m;
+  }
+
+  // 每辆车的涂装与特征件：P1 红车（米白大尾翼 + 1 号），P2 蓝车（低尾翼 + 2 号 + 引擎盖进气口）
   function makeCar(color, num, T) {
     var group = new T.Group();
     var wheels = [];
-    var paint = new T.MeshStandardMaterial({ color: color, roughness: 0.45, flatShading: true });
-    var dark = new T.MeshStandardMaterial({ color: 0x2b2320, roughness: 0.5, flatShading: true });
-    var cream = new T.MeshStandardMaterial({ color: 0xE9DCC4, roughness: 0.55, flatShading: true });
-    var tire = new T.MeshStandardMaterial({ color: 0x1b1714, roughness: 0.6, flatShading: true });
-    var hub = new T.MeshStandardMaterial({ color: 0xb9b2a4, roughness: 0.4, metalness: 0.25, flatShading: true });
+
+    // 车漆低粗糙度模拟注塑玩具的高光；镀铬不用高 metalness：没有环境贴图时高金属度会发黑
+    var paint = new T.MeshStandardMaterial({ color: color, roughness: 0.3, metalness: 0.12 });
+    var cream = new T.MeshStandardMaterial({ color: 0xE9DCC4, roughness: 0.38, metalness: 0.05 });
+    var dark = new T.MeshStandardMaterial({ color: 0x2b2320, roughness: 0.55, metalness: 0.1 });
+    var glass = new T.MeshStandardMaterial({ color: 0x18212b, roughness: 0.16, metalness: 0.35 });
+    var chrome = new T.MeshStandardMaterial({ color: 0xdfe4ea, roughness: 0.22, metalness: 0.35 });
+    var tire = new T.MeshStandardMaterial({ color: 0x171412, roughness: 0.85 });
+    var lamp = new T.MeshStandardMaterial({ color: 0xfff0c4, emissive: 0xffd98a, emissiveIntensity: 1.1, roughness: 0.25 });
+    var tail = new T.MeshStandardMaterial({ color: 0xff4a36, emissive: 0xff2a18, emissiveIntensity: 1.2, roughness: 0.3 });
 
     function box(w, h, d, mat, x, y, z, rz) {
       var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat);
@@ -80,73 +176,127 @@
       return m;
     }
 
-    // 圆角车身（44×26、圆角 9、倒角 1.6，高 ~12）；底面贴近轮顶
-    var body = slab(T, 44, 26, 9, 9, 1.6, paint);
-    body.position.y = 3.6;
-    group.add(body);
+    // 车身：一整块挤出曲面
+    group.add(bodyMesh(T, paint));
 
-    // 侧裙
-    box(30, 3, 2.5, dark, 0, 3.2, 12.4);
-    box(30, 3, 2.5, dark, 0, 3.2, -12.4);
+    // 底盘与侧裙：压暗车底、封住轮拱处的透空（侧裙贴车壳侧平面）
+    box(35, 2.6, 17.6, dark, -1, 3.3, 0);
+    box(27, 1.9, 0.6, dark, -0.5, 4.35, 10.62);
+    box(27, 1.9, 0.6, dark, -0.5, 4.35, -10.62);
 
-    // 引擎盖（前端叠在车身上）+ 米白条纹
-    var hood = slab(T, 15, 19, 3.2, 6, 1.1, paint);
-    hood.position.set(16, 13.4, 0);
-    group.add(hood);
-    var stripe = slab(T, 12.5, 4.5, 0.9, 2, 0.35, cream);
-    stripe.position.set(16.5, 17.4, 0);
-    group.add(stripe);
+    // 四个轮拱翼子板：圆管弧贴着轮胎上缘，比轮胎窄一圈，露出胎面
+    for (var fi = 0; fi < 4; fi++) {
+      var fender = fenderMesh(T, paint);
+      fender.position.set(fi % 2 === 0 ? WHEEL_X : -WHEEL_X, WHEEL_Y, fi < 2 ? WHEEL_Z : -WHEEL_Z);
+      group.add(fender);
+    }
 
-    // 风挡（后仰玻璃带）→ 座舱玻璃带 → 米白车顶
-    box(3.5, 7.5, 15, dark, 7.5, 15.5, 0, 0.42);
-    var cabin = slab(T, 19, 16, 5.5, 6, 1.2, dark);
-    cabin.position.set(-1.5, 12.6, 0);
-    group.add(cabin);
-    var roof = slab(T, 14.5, 12.5, 1.8, 5, 0.7, cream);
-    roof.position.set(-1.5, 19.4, 0);
-    group.add(roof);
+    // 风挡 / 后窗（抬到挤出外扩面上；先铺一圈米白窗框，再压玻璃，做出密封胶条边）/ 侧窗（贴车身侧平面）
+    group.add(slopedPanel(T, 8.36, 14.12, 3.44, 20.48, 15.9, 0.24, cream, BODY_BEVEL + 0.09, 0));
+    group.add(slopedPanel(T, 8.1, 14.4, 3.7, 20.2, 15.4, 0.3, glass, BODY_BEVEL + 0.18, 0));
+    group.add(slopedPanel(T, -16.56, 14.5, -11.34, 20.0, 14.7, 0.24, cream, BODY_BEVEL + 0.08, 0));
+    group.add(slopedPanel(T, -16.3, 14.5, -11.6, 20.0, 14.2, 0.3, glass, BODY_BEVEL + 0.16, 0));
+    var sideGlass = sideWindows(T, glass);
+    group.add(sideGlass[0]);
+    group.add(sideGlass[1]);
+    box(0.8, 4.4, 0.16, paint, -3.2, 17.3, 10.77);
+    box(0.8, 4.4, 0.16, paint, -3.2, 17.3, -10.77);
 
-    // 轮胎 + 浅色轮毂（轮毂比胎略宽，端面可见）
-    var wheelGeo = new T.CylinderGeometry(WHEEL_R, WHEEL_R, WHEEL_LEN, WHEEL_SEG);
-    var hubGeo = new T.CylinderGeometry(WHEEL_R * 0.48, WHEEL_R * 0.48, WHEEL_LEN + 0.8, WHEEL_SEG);
-    var signs = [-1, 1];
+    // 米白涂装：引擎盖 / 尾箱双条纹；P1 整片米白车顶，P2 车顶留条纹
+    var sz = 4.4;
+    group.add(slopedPanel(T, 20.0, 10.65, 13.0, 12.0, 2.2, 0.4, cream, BODY_BEVEL + 0.22, sz));
+    group.add(slopedPanel(T, 20.0, 10.65, 13.0, 12.0, 2.2, 0.4, cream, BODY_BEVEL + 0.22, -sz));
+    group.add(slopedPanel(T, -16.5, 14.55, -20.2, 13.4, 2.2, 0.4, cream, BODY_BEVEL + 0.18, sz));
+    group.add(slopedPanel(T, -16.5, 14.55, -20.2, 13.4, 2.2, 0.4, cream, BODY_BEVEL + 0.18, -sz));
+    if (num === 1) {
+      box(8.8, 0.5, 16.6, cream, -3.6, 22.09, 0);
+      group.add(makeRoundel(T, num, 22.36));
+    } else {
+      box(9.4, 0.55, 2.2, cream, -3.6, 22.26, sz);
+      box(9.4, 0.55, 2.2, cream, -3.6, 22.26, -sz);
+      group.add(makeRoundel(T, num, 22.06));
+    }
+
+    // 车灯 / 格栅 / 保险杠 / 尾灯 / 排气（都顶到外扩后的车头车尾表面）
+    for (var li = 0; li < 2; li++) {
+      var side = li === 0 ? 1 : -1;
+      var ring = new T.Mesh(new T.CylinderGeometry(2.3, 2.3, 1.0, 18), chrome);
+      ring.rotation.z = Math.PI / 2;
+      ring.position.set(22.95, 8.9, side * 5.7);
+      group.add(ring);
+      var bulb = new T.Mesh(new T.CylinderGeometry(1.7, 1.7, 1.3, 18), lamp);
+      bulb.rotation.z = Math.PI / 2;
+      bulb.position.set(23.08, 8.9, side * 5.7);
+      group.add(bulb);
+      box(0.6, 2.7, 5.4, dark, -22.9, 11.2, side * 5.7);
+      box(0.5, 1.7, 4.3, tail, -23.12, 11.2, side * 5.7);
+    }
+    box(0.7, 2.2, 7.0, dark, 22.9, 7.9, 0);
+    box(0.35, 1.5, 6.4, chrome, 23.1, 7.9, 0);
+    box(1.0, 1.2, 17, chrome, 23.1, 6.8, 0);
+    box(1.0, 1.2, 17, chrome, -23.0, 5.0, 0);
+    for (var ei = 0; ei < 2; ei++) {
+      var exh = new T.Mesh(new T.CylinderGeometry(0.95, 0.95, 2.0, 12), chrome);
+      exh.rotation.z = Math.PI / 2;
+      exh.position.set(-23.0, 4.2, ei === 0 ? 3.4 : -3.4);
+      group.add(exh);
+    }
+
+    // 后视镜：直接长在 A 柱外侧的镜盒
+    box(1.5, 1.6, 2.0, cream, 7.6, 15.35, 10.6);
+    box(1.5, 1.6, 2.0, cream, 7.6, 15.35, -10.6);
+
+    // 尾翼与车队特征件：翼型截面沿车宽挤出，rotation.z 为迎角
+    if (num === 1) {
+      var wing = wingMesh(T, 5.2, 20.4, cream);
+      wing.position.set(-19.2, 17.2, 0);
+      wing.rotation.z = 0.12;
+      group.add(wing);
+      box(5.6, 2.8, 0.5, paint, -19.2, 17.2, 10.2);
+      box(5.6, 2.8, 0.5, paint, -19.2, 17.2, -10.2);
+      box(0.9, 2.8, 1.1, dark, -18.4, 15.7, 5.5);
+      box(0.9, 2.8, 1.1, dark, -18.4, 15.7, -5.5);
+    } else {
+      var wing2 = wingMesh(T, 4.4, 17.6, paint);
+      wing2.position.set(-19.8, 15.8, 0);
+      wing2.rotation.z = 0.1;
+      group.add(wing2);
+      box(4.8, 2.3, 0.45, cream, -19.8, 15.8, 8.8);
+      box(4.8, 2.3, 0.45, cream, -19.8, 15.8, -8.8);
+      box(0.8, 1.6, 1.0, dark, -18.6, 14.9, 4.8);
+      box(0.8, 1.6, 1.0, dark, -18.6, 14.9, -4.8);
+      box(6.4, 1.1, 11.0, dark, 17.6, 12.25, 0, -0.12);
+    }
+
+    // 车轮：轮胎 + 镀铬五辐轮毂；挂进 Group 以便绕轴自转
+    var tireGeo = new T.CylinderGeometry(WHEEL_R, WHEEL_R, WHEEL_LEN, WHEEL_SEG);
+    var rimGeo = new T.CylinderGeometry(WHEEL_R * 0.66, WHEEL_R * 0.66, WHEEL_LEN + 0.7, WHEEL_SEG);
+    var capGeo = new T.CylinderGeometry(WHEEL_R * 0.24, WHEEL_R * 0.24, WHEEL_LEN + 1.1, 14);
+    var slotGeo = new T.BoxGeometry(0.55, 0.16, 3.4);
+    var signs = [1, -1];
     for (var xi = 0; xi < signs.length; xi++) {
       for (var zi = 0; zi < signs.length; zi++) {
-        var wheel = new T.Mesh(wheelGeo, tire);
-        wheel.rotation.x = Math.PI / 2;
-        wheel.position.set(signs[xi] * WHEEL_X, WHEEL_Y, signs[zi] * WHEEL_Z);
-        wheel.castShadow = true;
-        group.add(wheel);
-        wheels.push(wheel);
-        var cap = new T.Mesh(hubGeo, hub);
-        cap.rotation.x = Math.PI / 2;
-        cap.position.set(signs[xi] * WHEEL_X, WHEEL_Y, signs[zi] * WHEEL_Z);
-        group.add(cap);
+        var wg = new T.Group();
+        wg.rotation.x = Math.PI / 2;
+        var t = new T.Mesh(tireGeo, tire);
+        t.castShadow = true;
+        wg.add(t);
+        wg.add(new T.Mesh(rimGeo, chrome));
+        wg.add(new T.Mesh(capGeo, chrome));
+        var faceY = (zi === 0 ? 1 : -1) * 3.52;
+        for (var sp = 0; sp < 5; sp++) {
+          var ang = sp * Math.PI * 2 / 5;
+          var slot = new T.Mesh(slotGeo, dark);
+          slot.position.set(Math.sin(ang) * 2.5, faceY, Math.cos(ang) * 2.5);
+          slot.rotation.y = ang;
+          wg.add(slot);
+        }
+        wg.position.set(signs[xi] * WHEEL_X, WHEEL_Y, signs[zi] * WHEEL_Z);
+        group.add(wg);
+        wheels.push(wg);
       }
     }
     group.userData.wheels = wheels;
-
-    // 车头灯：两盏 emissive 小方块
-    var lightMat = new T.MeshStandardMaterial({
-      color: 0xffe0a0,
-      emissive: 0xffe0a0,
-      emissiveIntensity: 0.9,
-      roughness: 0.45
-    });
-    var lightGeo = new T.BoxGeometry(LIGHT_W, LIGHT_H, LIGHT_D);
-    for (var li = 0; li < signs.length; li++) {
-      var lamp = new T.Mesh(lightGeo, lightMat);
-      lamp.position.set(LIGHT_X, LIGHT_Y, signs[li] * LIGHT_Z);
-      group.add(lamp);
-    }
-
-    // 尾翼：圆角薄板 + 双支柱；P1 更高更大
-    var wing = slab(T, 3.4, 22, 2, 1.2, 0.5, paint);
-    wing.position.set(SPOILER_X, SPOILER_Y + (num === 1 ? 2.5 : 1), 0);
-    group.add(wing);
-    box(2, 4, SPOILER_D - 6, dark, SPOILER_X + 2.2, SPOILER_Y - 2.5, 0);
-    // P2 特征件：车头楔形（前压鼻）
-    if (num === 2) box(WEDGE_W, WEDGE_H, WEDGE_D, paint, WEDGE_X, WEDGE_Y, 0, -0.18);
 
     // 收集本车所有材质（去重）：复位期只改透明度，不再整辆车隐显
     var mats = [];
@@ -209,10 +359,11 @@
       : Math.atan2(-tan.ty, tan.tx) + slideYaw;
 
     // 俯仰：上坡车头抬起、下坡低头；与打滑摆动相加（不覆盖）
+    // 车头是 +X，rotation.z 正角抬头；slopeAt 上坡为正，故取 +atan(slope)
     var pitch = 0;
     if (typeof track.slopeAt === 'function') {
       var slope = Number(track.slopeAt(car.s));
-      if (isFinite(slope)) pitch = -Math.atan(slope);
+      if (isFinite(slope)) pitch = Math.atan(slope);
     }
     var sway = car.slip > 0.25 ? Math.sin(time * SLIP_RATE) * SLIP_ANGLE : 0;
 
@@ -306,7 +457,7 @@
     gl.scene.add(g2);
 
     // ---- 灰尘尾迹（3D）：每车一小池地面圆片，巡航淡拖尾 / 打滑浓尘 / 落地尘爆 ----
-    var DUST_N = 20;
+    var DUST_N = 24;
     var DUST_TAN = 0xE0D2B4;
     var FLY_GUARD = 1.7;
     var dustGeo = new T.CircleGeometry(1, 10);
@@ -346,17 +497,18 @@
       if (!isFinite(elev)) elev = 0;
       var spread = mode === 'burst' ? 16 : 6;
       var speedBoost = mode === 'slip' ? 1.35 : 1;
+      // 路面在 y = 1 + elev（gl.js SURFACE_Y）：尘片必须略高于路面，否则会被深度测试埋掉
       d.mesh.position.set(
         back.x - tan.tx * 6 + (Math.random() - 0.5) * spread,
-        elev + 0.6,
+        elev + 1.2,
         back.y - tan.ty * 6 + (Math.random() - 0.5) * spread
       );
       d.vx = -tan.tx * 24 * speedBoost + (Math.random() - 0.5) * 26;
       d.vz = -tan.ty * 24 * speedBoost + (Math.random() - 0.5) * 26;
-      d.size = mode === 'slip' ? 4 + Math.random() * 2.6 : (mode === 'burst' ? 4.5 + Math.random() * 2.6 : 2.4 + Math.random() * 1.5);
-      d.peak = mode === 'slip' ? 0.4 : (mode === 'burst' ? 0.38 : 0.15);
+      d.size = mode === 'slip' ? 8 + Math.random() * 3.5 : (mode === 'burst' ? 10 + Math.random() * 4 : 6 + Math.random() * 2.5);
+      d.peak = mode === 'slip' ? 0.5 : (mode === 'burst' ? 0.5 : 0.34);
       d.age = 0;
-      d.life = mode === 'cruise' ? 0.8 + Math.random() * 0.3 : 0.45 + Math.random() * 0.25;
+      d.life = mode === 'cruise' ? 1.1 + Math.random() * 0.4 : 0.6 + Math.random() * 0.3;
       d.mesh.visible = true;
     }
 
@@ -369,14 +521,14 @@
           if (!car) continue;
           // 落地沿：derailT 越过 FLY_GUARD 炸一圈尘
           if (car.derailed && dustPrevFly[i] <= FLY_GUARD && Number(car.derailT) > FLY_GUARD) {
-            for (var b = 0; b < 6; b++) dustSpawn(car, tk, 'burst');
+            for (var b = 0; b < 8; b++) dustSpawn(car, tk, 'burst');
           }
           dustPrevFly[i] = Number(car.derailT) || 0;
           if (car.derailed || dustClock[i] > 0) continue;
           var speed = Number(car.speed) || 0;
           if ((Number(car.slip) || 0) > 0.3) { dustSpawn(car, tk, 'slip'); dustClock[i] = 0.055; }
           else if ((Number(car.throttle) || 0) > 0.85 && speed < 150) { dustSpawn(car, tk, 'slip'); dustClock[i] = 0.055; }
-          else if (speed > 40) { dustSpawn(car, tk, 'cruise'); dustClock[i] = 0.09; }
+          else if (speed > 40) { dustSpawn(car, tk, 'cruise'); dustClock[i] = 0.07; }
         }
       }
       // 推进

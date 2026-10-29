@@ -745,16 +745,23 @@
     resize();
     window.addEventListener('resize', resize);
 
-    // 相机：固定 BASE 机位 + 脱轨/落地时的短促震动（幅度按帧指数衰减）
+    // 相机：固定 BASE 机位 + 脱轨/落地时的短促震动
+    // 衰减按真实时间而非帧数：0.86/帧 是 60Hz 下调好的手感，高刷机上按帧衰减会 20ms 就抖完
     var shakePow = 0;
+    var shakeLast = 0;
     function shake(power) { shakePow = Math.max(shakePow, Number(power) || 0); }
     function render(race, time) {
+      var nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      var sdt = shakeLast ? (nowMs - shakeLast) / 1000 : 0;
+      shakeLast = nowMs;
+      if (!(sdt > 0)) sdt = 0;
+      if (sdt > 0.2) sdt = 0.2;
       camera.position.set(CAM_BASE_X, CAM_BASE_Y, CAM_BASE_Z);
       if (shakePow > 0.05) {
         camera.position.x += (Math.random() - 0.5) * shakePow;
         camera.position.y += (Math.random() - 0.5) * shakePow * 0.6;
         camera.position.z += (Math.random() - 0.5) * shakePow;
-        shakePow *= 0.86;
+        shakePow *= Math.pow(0.86, sdt * 60);
       }
       camera.lookAt(0, 0, 0);
 
