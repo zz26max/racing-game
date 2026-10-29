@@ -243,6 +243,71 @@ if (store['slotrace.track'] !== 'attic') {
 }
 console.log('[guard] createTrack 抛错时状态未被污染');
 
+// ---- 流程 0e：新菜单三选项（教程 / 设置）与设置持久化 ----
+// 点击后要等纸卡换页 0.46s 才恢复按钮命中（动画期间故意不注册）
+dispatchPointer('pointerdown', 720, 530, { pointerId: 30, pointerType: 'mouse' });   // 教程 (650..790, 504..556)
+runFrames(40);
+if (windowStub.__DBG__.phase !== 'title' || windowStub.__DBG__.ui !== 'tutorial') {
+  console.log('  ✗ 点教程应停在 title 且 ui=tutorial，实际 phase=' + windowStub.__DBG__.phase + ' ui=' + windowStub.__DBG__.ui);
+  process.exit(1);
+}
+dispatchPointer('pointerup', 720, 530, { pointerId: 30 });
+console.log('[menu] 教程页 ✓');
+
+pressKey('Escape'); runFrames(40);   // Esc 返回菜单，等换页动画结束
+dispatchPointer('pointerdown', 876, 530, { pointerId: 31, pointerType: 'mouse' });   // 设置 (806..946, 504..556)
+runFrames(40);
+if (windowStub.__DBG__.phase !== 'title' || windowStub.__DBG__.ui !== 'settings') {
+  console.log('  ✗ 点设置应停在 title 且 ui=settings，实际 phase=' + windowStub.__DBG__.phase + ' ui=' + windowStub.__DBG__.ui);
+  process.exit(1);
+}
+dispatchPointer('pointerup', 876, 530, { pointerId: 31 });
+console.log('[menu] 设置页 ✓');
+
+// 音效行：点两次恢复有声（不影响后面流程 4 对静音初始值的假设）
+dispatchPointer('pointerdown', 890, 316, { pointerId: 32, pointerType: 'mouse' });
+runFrames(4);
+if (store['slotrace.muted'] !== '1') { console.log('  ✗ 设置页音效关未持久化，store=', store['slotrace.muted']); process.exit(1); }
+dispatchPointer('pointerup', 890, 316, { pointerId: 32 });
+runFrames(2);
+dispatchPointer('pointerdown', 890, 316, { pointerId: 33, pointerType: 'mouse' });
+runFrames(4);
+if (store['slotrace.muted'] !== '0') { console.log('  ✗ 设置页音效开未持久化，store=', store['slotrace.muted']); process.exit(1); }
+dispatchPointer('pointerup', 890, 316, { pointerId: 33 });
+runFrames(2);
+console.log('[settings] 音效开/关持久化 ✓');
+
+// 圈数行：3 → 5（启动后面 startRace 会用 5 圈，不影响本模拟的断言）
+dispatchPointer('pointerdown', 890, 390, { pointerId: 34, pointerType: 'mouse' });
+runFrames(4);
+if (store['slotrace.laps'] !== '5') { console.log('  ✗ 设置页圈数未写入 localStorage，store=', store['slotrace.laps']); process.exit(1); }
+dispatchPointer('pointerup', 890, 390, { pointerId: 34 });
+runFrames(2);
+console.log('[settings] 圈数 3→5 持久化 ✓');
+
+// 镜头震动行：开 → 关 → 再开（恢复默认，避免影响后续流程）
+dispatchPointer('pointerdown', 890, 464, { pointerId: 35, pointerType: 'mouse' });
+runFrames(4);
+if (store['slotrace.shake'] !== '0') { console.log('  ✗ 设置页震动关未持久化，store=', store['slotrace.shake']); process.exit(1); }
+dispatchPointer('pointerup', 890, 464, { pointerId: 35 });
+runFrames(2);
+dispatchPointer('pointerdown', 890, 464, { pointerId: 36, pointerType: 'mouse' });
+runFrames(4);
+if (store['slotrace.shake'] !== '1') { console.log('  ✗ 设置页震动开未持久化，store=', store['slotrace.shake']); process.exit(1); }
+dispatchPointer('pointerup', 890, 464, { pointerId: 36 });
+runFrames(2);
+console.log('[settings] 镜头震动开/关持久化 ✓');
+
+// 设置页返回菜单
+dispatchPointer('pointerdown', 640, 544, { pointerId: 37, pointerType: 'mouse' });   // 返回 (560..720, 520..568)
+runFrames(40);
+dispatchPointer('pointerup', 640, 544, { pointerId: 37 });
+runFrames(2);
+if (windowStub.__DBG__.phase !== 'title') {
+  console.log('  ✗ 设置返回后应仍在 title，实际 phase=', windowStub.__DBG__.phase); process.exit(1);
+}
+console.log('[menu] 设置返回菜单 ✓');
+
 // ---- 流程 1：ArrowRight ×2 切赛道 → Enter 开赛 → 跑 ~3 秒 ----
 console.log('  [dbg] keyHandlers:', keyHandlers.map(h => h.name || 'anon').join(','), '| input instance:', typeof (windowStub.RaceInput && windowStub.RaceInput.createInput));
 pressKey('ArrowRight'); runFrames(2);
@@ -276,9 +341,10 @@ if (windowStub.__DBG__.phase !== 'title') {
 }
 
 // 3a：点按标题任意处开始（触摸，不能点在选择器那一行 y∈[324,412]）
+// 开始游戏有 0.42s 纸卡转场，等 40 帧再断言进入倒计时
 dispatchPointer('pointerdown', 100, 600, { pointerId: 3, pointerType: 'touch' });
 dispatchPointer('pointerup', 100, 600, { pointerId: 3, pointerType: 'touch' });
-runFrames(10);
+runFrames(40);
 if (windowStub.__DBG__.phase !== 'countdown' && windowStub.__DBG__.phase !== 'running') {
   console.log('  ✗ 点按后应开赛，实际 phase =', windowStub.__DBG__.phase); process.exit(1);
 }
@@ -346,16 +412,16 @@ dispatchPointer('pointerup', 1233, 42, { pointerId: 8 });
 runFrames(4);
 console.log('[ui-unmute] 恢复有声 ✓');
 
-// 4b2：标题上的「开始比赛」按钮直接开赛
-dispatchPointer('pointerdown', 640, 536, { pointerId: 14 });   // 开始按钮 (500..780, 508..564)
-runFrames(8);
+// 4b2：标题上的「开始游戏」按钮直接开赛（鼠标点击 = 只能命中芯片，不触发点按任意处）
+dispatchPointer('pointerdown', 480, 530, { pointerId: 14, pointerType: 'mouse' });   // 开始游戏 (334..634, 502..558)
+runFrames(40);
 const phase4b2 = windowStub.__DBG__.phase;
 if (phase4b2 !== 'countdown' && phase4b2 !== 'running') {
   console.log('  ✗ 点开始按钮应开赛，phase =', phase4b2); process.exit(1);
 }
-dispatchPointer('pointerup', 640, 536, { pointerId: 14 });
+dispatchPointer('pointerup', 480, 530, { pointerId: 14, pointerType: 'mouse' });
 runFrames(2);
-console.log('[ui-start] 开始比赛按钮 → ' + phase4b2 + ' ✓');
+console.log('[ui-start] 开始游戏按钮 → ' + phase4b2 + ' ✓');
 pressKey('Escape'); runFrames(8);
 if (windowStub.__DBG__.phase !== 'title') {
   console.log('  ✗ Esc 应回标题，phase =', windowStub.__DBG__.phase); process.exit(1);
@@ -364,7 +430,7 @@ if (windowStub.__DBG__.phase !== 'title') {
 // 4c：开赛 → 点暂停芯片 → paused，且不注入半屏油门
 dispatchPointer('pointerdown', 100, 600, { pointerId: 9 });
 dispatchPointer('pointerup', 100, 600, { pointerId: 9 });
-runFrames(10);
+runFrames(40);
 const phase4c = windowStub.__DBG__.phase;
 if (phase4c !== 'countdown' && phase4c !== 'running') {
   console.log('  ✗ 点按开赛失败，phase =', phase4c); process.exit(1);
@@ -412,10 +478,11 @@ console.log('[ui-back] 暂停面板回标题 ✓');
 // ---- 流程 5：反馈层音效（倒计时 beep / 按钮点击音）----
 audioLog.length = 0;
 pressKey('Escape'); runFrames(8);
-dispatchPointer('pointerdown', 640, 536, { pointerId: 20 });   // 开始比赛
-runFrames(8);
-dispatchPointer('pointerup', 640, 536, { pointerId: 20 });
-runFrames(210);   // 3.5s：覆盖 3/2/1 三档 + GO
+// 触摸点按任意处开赛（标题入场动画未结束时也能开）：先等纸卡转场 0.42s，再跑满 3.2s 倒计时
+dispatchPointer('pointerdown', 100, 600, { pointerId: 20, pointerType: 'touch' });
+runFrames(40);
+dispatchPointer('pointerup', 100, 600, { pointerId: 20, pointerType: 'touch' });
+runFrames(260);   // 覆盖纸卡转场 + 3/2/1 三档 + GO
 const beeps = audioLog.filter(e => typeof e.t === 'number');
 const low = beeps.filter(e => e.freq === 440).length;
 const high = beeps.filter(e => e.freq === 990).length;

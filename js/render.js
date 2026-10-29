@@ -69,6 +69,13 @@
   var CHIP_PAUSE_X = 828;    // 暂停芯片：828..874（中上计时与 P2 面板之间）
   var CHIP_MUTE_X = 884;     // 静音芯片：884..930（距 P2 面板 38px）
 
+  // ---- 标题纸卡与转场（时长与 main.js 同名常量一致：动画由 main 记起始时刻、render 算进度）----
+  var CARD_X = 190, CARD_Y = 125, CARD_W = 900, CARD_H = 470, CARD_R = 16;
+  var PAGE_SLIDE = CARD_W + 120;   // 换页横向位移（旧卡滑出、新卡从另一侧滑入）
+  var MENU_ANIM_DUR = 0.46;        // 换页时长（秒）
+  var MENU_ENTER_DUR = 0.5;        // 回到标题时纸卡落桌时长
+  var START_FX_DUR = 0.42;         // 开始游戏：纸卡压向镜头并淡出
+
   // 屏上按钮命中注册：每帧由 drawTitle / drawHUD 重建，检测时从最上层（最后注册）往回找
   var uiHits = [];
   function uiBeginFrame() { uiHits.length = 0; }
@@ -553,7 +560,7 @@
 
   // ---- 灰尘尾迹（2D 兜底；三档：巡航淡拖尾 / 打滑浓尘 / 落地尘爆）----
   var dust = [];              // { x, y, vx, vy, age, life, size, peak }
-  var DUST_MAX = 72;
+  var DUST_MAX = 84;
   var DUST_TAN = '224,210,180';
   var FLY_GUARD = 1.7;        // 脱轨飞行截断（= car.js FLY_GUARD），穿越即落地
   var dustClock = [0, 0];     // 每车发射节流
@@ -577,9 +584,9 @@
       vx: -tx * 24 * speedBoost + (Math.random() - 0.5) * 26,
       vy: -ty * 24 * speedBoost + (Math.random() - 0.5) * 26,
       age: 0,
-      life: mode === 'cruise' ? 0.8 + Math.random() * 0.3 : 0.45 + Math.random() * 0.25,
-      size: mode === 'slip' ? 4.5 + Math.random() * 3 : (mode === 'burst' ? 5 + Math.random() * 3 : 2.6 + Math.random() * 1.6),
-      peak: mode === 'slip' ? 0.42 : (mode === 'burst' ? 0.4 : 0.15)
+      life: mode === 'cruise' ? 1.1 + Math.random() * 0.4 : 0.6 + Math.random() * 0.3,
+      size: mode === 'slip' ? 8.2 + Math.random() * 3.7 : (mode === 'burst' ? 10.2 + Math.random() * 4 : 6.2 + Math.random() * 2.6),
+      peak: mode === 'slip' ? 0.5 : (mode === 'burst' ? 0.5 : 0.34)
     });
   }
 
@@ -597,14 +604,14 @@
         if (!car) continue;
         // 落地沿：derailT 越过 FLY_GUARD 的那一帧炸一圈尘
         if (car.derailed && dustPrevFly[i] <= FLY_GUARD && Number(car.derailT) > FLY_GUARD) {
-          for (var b = 0; b < 6; b++) dustSpawn(track, car, 'burst');
+          for (var b = 0; b < 8; b++) dustSpawn(track, car, 'burst');
         }
         dustPrevFly[i] = Number(car.derailT) || 0;
         if (car.derailed || dustClock[i] > 0) continue;
         var speed = Number(car.speed) || 0;
         if ((Number(car.slip) || 0) > 0.3) { dustSpawn(track, car, 'slip'); dustClock[i] = 0.055; }
         else if ((Number(car.throttle) || 0) > 0.85 && speed < 150) { dustSpawn(track, car, 'slip'); dustClock[i] = 0.055; }
-        else if (speed > 40) { dustSpawn(track, car, 'cruise'); dustClock[i] = 0.09; }
+        else if (speed > 40) { dustSpawn(track, car, 'cruise'); dustClock[i] = 0.07; }
       }
     }
     for (i = dust.length - 1; i >= 0; i--) {
@@ -1027,37 +1034,107 @@
     ctx.fillText(value, x + w / 2, y + 42);
   }
 
-  // 标题界面（桌游纸卡）：
-  //   左列赛道预览 + 右列选择器/统计，主操作「开始比赛」为第一层级，
-  //   键位提示压成卡下方的键帽行（调研：主操作突出、预览是选图核心、次级信息靠边）
-  function drawTitle(ctx, s) {
-    if (!ctx || !s) return;
-    var t = Number(s.time) || 0;
-    titleArrowHits.left = null;
-    titleArrowHits.right = null;
-    titleRowHit = null;
-    uiBeginFrame();
+  // ---- 标题纸卡：三页（菜单 / 教程 / 设置）共用一张卡面，换页时整张卡横向滑过桌面 ----
 
-    ctx.save();
-    ctx.fillStyle = DIM_TITLE;
-    ctx.fillRect(0, 0, W, H);
+  function easeOutCubic(p) { var q = 1 - p; return 1 - q * q * q; }
+  function easeInOutCubic(p) { return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2; }
 
-    // 纸卡 900×470 居中
-    var cardX = 190, cardY = 125, cardW = 900, cardH = 470;
-    roundRectPath(ctx, cardX + 4, cardY + 4, cardW, cardH, 16);
+  // 纸卡底：硬投影 + 奶油纸面 + 墨描边（所有页同一张卡）
+  function drawCardShell(ctx) {
+    roundRectPath(ctx, CARD_X + 4, CARD_Y + 4, CARD_W, CARD_H, CARD_R);
     ctx.fillStyle = 'rgba(43,35,32,.25)';
     ctx.fill();
-    roundRectPath(ctx, cardX, cardY, cardW, cardH, 16);
-    ctx.fillStyle = 'rgba(233,220,196,.94)';
+    roundRectPath(ctx, CARD_X, CARD_Y, CARD_W, CARD_H, CARD_R);
+    ctx.fillStyle = 'rgba(233,220,196,.97)';
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = COL.ink;
     ctx.stroke();
+  }
 
+  // 子页页眉：大标题 + 副标题 + 墨色分隔线
+  function drawPageHeader(ctx, title, subtitle) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    setFont(ctx, 'bold', 46);
+    ctx.fillStyle = COL.ink;
+    ctx.fillText(title, W / 2, 194);
+    setFont(ctx, 'normal', 15);
+    ctx.fillStyle = 'rgba(43,35,32,.7)';
+    ctx.fillText(subtitle, W / 2, 236);
+    ctx.beginPath();
+    ctx.moveTo(250, 264);
+    ctx.lineTo(1030, 264);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(43,35,32,.3)';
+    ctx.stroke();
+  }
 
-    // 标题锁定（视觉锚点）
+  // 小节标签：小木牌（教程页「怎么开 / 怎么赢」）
+  function drawSectionTab(ctx, x, y, label) {
+    roundRectPath(ctx, x, y, 96, 30, 8);
+    ctx.fillStyle = UI_WOOD;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = COL.ink;
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    setFont(ctx, 'bold', 16);
+    ctx.fillStyle = COL.text;
+    ctx.fillText(label, x + 48, y + 16);
+  }
+
+  // 圆点列表：木色圆点 + 墨色正文
+  function drawBulletList(ctx, x, y, items, gap) {
+    for (var i = 0; i < items.length; i++) {
+      var by = y + i * gap;
+      ctx.beginPath();
+      ctx.arc(x + 4, by - 1, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = UI_WOOD;
+      ctx.fill();
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      setFont(ctx, 'normal', 16);
+      ctx.fillStyle = 'rgba(43,35,32,.9)';
+      ctx.fillText(items[i], x + 18, by);
+    }
+  }
+
+  // 纸面凹槽提示条（教程页底部的「关键」）
+  function drawCallout(ctx, x, y, w, h, text) {
+    roundRectPath(ctx, x, y, w, h, 10);
+    ctx.fillStyle = 'rgba(43,35,32,.07)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(43,35,32,.45)';
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    setFont(ctx, 'normal', 15);
+    ctx.fillStyle = 'rgba(43,35,32,.85)';
+    ctx.fillText(text, x + w / 2, y + h / 2 + 1);
+  }
+
+  // 整页变换：以屏幕中心为轴做位移 / 旋转 / 缩放 / 透明，再画卡面与内容
+  function drawPage(ctx, id, s, dx, dy, rot, scale, alpha, hitsOn) {
+    ctx.save();
+    ctx.translate(W / 2 + dx, H / 2 + dy);
+    ctx.rotate(rot);
+    ctx.scale(scale, scale);
+    ctx.translate(-W / 2, -H / 2);
+    ctx.globalAlpha = clamp(alpha, 0, 1);
+    drawCardShell(ctx);
+    if (id === 'tutorial') drawTutorialPage(ctx, s, hitsOn);
+    else if (id === 'settings') drawSettingsPage(ctx, s, hitsOn);
+    else drawMenuPage(ctx, s, hitsOn);
+    ctx.restore();
+  }
+
+  // 菜单页：赛道预览 + 选择器 + 统计 + 三枚菜单芯片
+  function drawMenuPage(ctx, s, hitsOn) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     setFont(ctx, 'bold', 76);
     ctx.fillStyle = COL.ink;
     ctx.fillText('轨道赛车', W / 2, 206);
@@ -1065,10 +1142,9 @@
     ctx.fillStyle = 'rgba(43,35,32,.7)';
     ctx.fillText('《双人成行》阁楼小游戏 · 程序化复刻', W / 2, 254);
 
-    // 左列：赛道预览（选择赛道的核心信息）
     drawTrackPreview(ctx, 250, 288, 330, 196, s.track);
 
-    // 右列：选择器 ◀ 名称 ▶（方向键 / A·D / 点击切换，localStorage 记忆）
+    // 选择器 ◀ 名称 ▶（方向键 / A·D / 点击切换，localStorage 记忆）
     var trackCount = Number(s.trackCount) || 0;
     var colCx = 815;
     if (trackCount > 1) {
@@ -1091,19 +1167,21 @@
       ctx.fillText(name, nameCx, baseY);
       setFont(ctx, 'bold', arrowFs);
       ctx.fillText('▶', rightCx, baseY);
-      setArrowHit('left', leftCx, baseY);
-      setArrowHit('right', rightCx, baseY);
-      // 整行命中：限制在选择器附近（左侧是预览卡，不参与切赛道）
-      titleRowHit = {
-        baseY: baseY,
-        nameCx: nameCx,
-        minX: leftCx - 64,
-        maxX: rightCx + 64,
-        trackCount: trackCount
-      };
       setFont(ctx, 'normal', 14);
       ctx.fillStyle = 'rgba(43,35,32,.65)';
       ctx.fillText(s.trackDesc || '', colCx, 372);
+      if (hitsOn) {
+        setArrowHit('left', leftCx, baseY);
+        setArrowHit('right', rightCx, baseY);
+        // 整行命中：限制在选择器附近（左侧是预览卡，不参与切赛道）
+        titleRowHit = {
+          baseY: baseY,
+          nameCx: nameCx,
+          minX: leftCx - 64,
+          maxX: rightCx + 64,
+          trackCount: trackCount
+        };
+      }
     }
 
     // 统计小卡：总长 / 弯道 / 存档最佳圈
@@ -1114,24 +1192,169 @@
     drawStatCard(ctx, 756, 400, 118, 64, '弯道', track && track.corners ? String(track.corners.length) : '—');
     drawStatCard(ctx, 892, 400, 118, 64, '存档最佳圈', bestTxt);
 
-    // 主操作：开始比赛（第一层级，Enter / 点按任意处同义）
+    // 三枚菜单芯片：开始游戏（木色主操作）+ 教程 / 设置（纸卡次操作）
+    // 全部落在纸卡内部下沿，触控目标 ≥44px；开始游戏最宽，保持第一层级
     drawChip(ctx, {
-      id: 'start', x: W / 2 - 140, y: 508, w: 280, h: 56,
-      label: '开始比赛', face: 'wood', pressed: isPressed(s, 'start')
+      id: 'start', x: 334, y: 502, w: 300, h: 56,
+      label: '开始游戏', face: 'wood', pressed: isPressed(s, 'start')
     });
-    registerUI('start', W / 2 - 140, 508, 280, 56);
+    if (hitsOn) registerUI('start', 334, 502, 300, 56);
+    drawChip(ctx, {
+      id: 'tutorial', x: 650, y: 504, w: 140, h: 52,
+      label: '教程', face: 'paper', pressed: isPressed(s, 'tutorial')
+    });
+    if (hitsOn) registerUI('tutorial', 650, 504, 140, 52);
+    drawChip(ctx, {
+      id: 'settings', x: 806, y: 504, w: 140, h: 52,
+      label: '设置', face: 'paper', pressed: isPressed(s, 'settings')
+    });
+    if (hitsOn) registerUI('settings', 806, 504, 140, 52);
+
+    var laps = Number(s.laps) > 0 ? Math.floor(Number(s.laps)) : DEFAULT_LAPS;
     setFont(ctx, 'normal', 12);
     ctx.fillStyle = 'rgba(43,35,32,.55)';
-    ctx.fillText('按 Enter 或点按画面任意处同样开始', W / 2, 584);
+    ctx.fillText(laps + ' 圈 · Enter 或点按画面开始 · ←/→ 换赛道', W / 2, 584);
+  }
 
-    // 右上角静音芯片（M 键同义；命中先于「点按任意处开始」，见 main.onPointerDown）
+  // 教程页：规则分两列（怎么开 / 怎么赢），底部一条「关键」提示
+  function drawTutorialPage(ctx, s, hitsOn) {
+    drawPageHeader(ctx, '教程', '一分钟上手：车只能加速，过弯靠松油');
+
+    drawSectionTab(ctx, 250, 286, '怎么开');
+    drawBulletList(ctx, 250, 340, [
+      '小车卡在轨道槽里，只能加速不能转向',
+      '油门踩深，右侧抓地条会从绿变红',
+      '红区继续硬踩 → 打滑、脱轨',
+      '过弯前松油，等抓地条回落再踩回去'
+    ], 32);
+
+    drawSectionTab(ctx, 670, 286, '怎么赢');
+    drawBulletList(ctx, 670, 340, [
+      '先跑完设定圈数的一方获胜',
+      '交叉点是碰撞与超车的高发区',
+      '脱轨会自动救车，但白白浪费秒数',
+      '同屏双人：左右半屏各按一根手指'
+    ], 32);
+
+    drawCallout(ctx, 250, 452, 780, 54,
+      '关键：抓地条进红区时松油，车会自动救回来；继续硬踩就会脱轨。');
+
     drawChip(ctx, {
-      id: 'mute', x: W - 24 - CHIP_W, y: 20, w: CHIP_W, h: CHIP_H,
-      icon: 'sound', iconOn: !s.muted, face: 'paper', pressed: isPressed(s, 'mute')
+      id: 'menuBack', x: 560, y: 520, w: 160, h: 48,
+      label: '返回', face: 'wood', pressed: isPressed(s, 'menuBack')
     });
-    registerUI('mute', W - 24 - CHIP_W, 20, CHIP_W, CHIP_H);
+    if (hitsOn) registerUI('menuBack', 560, 520, 160, 48);
+    setFont(ctx, 'normal', 12);
+    ctx.fillStyle = 'rgba(43,35,32,.55)';
+    ctx.fillText('Esc 或 Enter 返回', W / 2, 584);
+  }
 
-    // 卡下方键帽行（次级信息）
+  // 设置页：三行开关（音效 / 圈数 / 镜头震动），值直接写在芯片上
+  function drawSettingsPage(ctx, s, hitsOn) {
+    drawPageHeader(ctx, '设置', '偏好保存在本机浏览器，下次打开仍然有效');
+
+    var cfg = s.settings || {};
+    var laps = Number(cfg.laps) === 5 ? 5 : 3;
+    var rows = [
+      { id: 'optSound', y: 292, label: '音效', desc: '倒计时、引擎与碰撞反馈',
+        value: s.muted ? '关' : '开', face: s.muted ? 'paper' : 'wood' },
+      { id: 'optLaps', y: 366, label: '圈数', desc: '比赛总圈数（默认 3 圈）',
+        value: laps + ' 圈', face: 'paper' },
+      { id: 'optShake', y: 440, label: '镜头震动', desc: '脱轨与落地时的镜头抖动',
+        value: cfg.shake === false ? '关' : '开', face: cfg.shake === false ? 'paper' : 'wood' }
+    ];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      setFont(ctx, 'bold', 20);
+      ctx.fillStyle = COL.ink;
+      ctx.fillText(row.label, 330, row.y + 18);
+      setFont(ctx, 'normal', 12);
+      ctx.fillStyle = 'rgba(43,35,32,.6)';
+      ctx.fillText(row.desc, 330, row.y + 41);
+      drawChip(ctx, {
+        id: row.id, x: 800, y: row.y, w: 180, h: 48,
+        label: row.value, face: row.face, pressed: isPressed(s, row.id)
+      });
+      if (hitsOn) registerUI(row.id, 800, row.y, 180, 48);
+      if (i < rows.length - 1) {
+        ctx.beginPath();
+        ctx.moveTo(330, row.y + 66);
+        ctx.lineTo(980, row.y + 66);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(43,35,32,.18)';
+        ctx.stroke();
+      }
+    }
+
+    drawChip(ctx, {
+      id: 'menuBack', x: 560, y: 520, w: 160, h: 48,
+      label: '返回', face: 'wood', pressed: isPressed(s, 'menuBack')
+    });
+    if (hitsOn) registerUI('menuBack', 560, 520, 160, 48);
+    setFont(ctx, 'normal', 12);
+    ctx.fillStyle = 'rgba(43,35,32,.55)';
+    ctx.fillText('Esc 返回', W / 2, 584);
+  }
+
+  // 标题界面总入口：
+  //   三页共用一张 900×470 纸卡；换页=旧卡滑出/新卡滑入（轻微旋转），
+  //   回到标题时纸卡「落桌」，开始游戏时纸卡压向镜头并淡出。
+  //   动画期间不注册页内按钮，避免点到还没落位的芯片。
+  function drawTitle(ctx, s) {
+    if (!ctx || !s) return;
+    var t = Number(s.time) || 0;
+    titleArrowHits.left = null;
+    titleArrowHits.right = null;
+    titleRowHit = null;
+    uiBeginFrame();
+
+    var view = (s.menuView === 'tutorial' || s.menuView === 'settings') ? s.menuView : 'menu';
+    var anim = (s.menuAnim && s.menuAnim.from && s.menuAnim.to) ? s.menuAnim : null;
+    var animP = anim ? clamp((t - (Number(anim.t0) || 0)) / MENU_ANIM_DUR, 0, 1) : 1;
+    var enterP = (s.menuEnter === undefined || s.menuEnter === null)
+      ? 1 : clamp((t - (Number(s.menuEnter) || 0)) / MENU_ENTER_DUR, 0, 1);
+    var fxOn = Number(s.startFx) > 0;
+    var fxP = fxOn ? clamp((t - Number(s.startFx)) / START_FX_DUR, 0, 1) : 0;
+    var ready = animP >= 1 && enterP >= 1 && !fxOn;
+
+    // 背景压暗：入场随纸卡一起淡入，开始转场随纸卡一起淡出
+    ctx.save();
+    ctx.globalAlpha = clamp(enterP * (1 - fxP), 0, 1);
+    ctx.fillStyle = DIM_TITLE;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+
+    if (anim && animP < 1) {
+      // 换页：旧卡滑向一侧，新卡从另一侧滑入，像在桌面上推卡片
+      var e = easeInOutCubic(animP);
+      var dir = Number(anim.dir) || 1;
+      drawPage(ctx, anim.from, s, -dir * PAGE_SLIDE * e, 0, -dir * 0.05 * e, 1,
+        1 - 0.65 * e, false);
+      drawPage(ctx, anim.to, s, dir * PAGE_SLIDE * (1 - e), 0, dir * 0.05 * (1 - e), 1,
+        0.35 + 0.65 * e, false);
+    } else if (fxOn) {
+      // 开始：纸卡加速压向镜头（缩放 + 淡出），随后由 main 切入倒计时
+      var fe = fxP * fxP * fxP;
+      drawPage(ctx, view, s, 0, 0, -0.02 * fe, 1 + 1.2 * fe, 1 - fe, false);
+    } else {
+      // 静态或落桌：从下方 54px、轻微右倾落位
+      var ee = easeOutCubic(enterP);
+      drawPage(ctx, view, s, 0, (1 - ee) * 54, (1 - ee) * 0.028,
+        0.97 + 0.03 * ee, 0.4 + 0.6 * ee, ready);
+    }
+
+    // 右上角静音芯片：桌边固定小件，不随纸卡换页；设置页已有「音效」行，不重复
+    if (view !== 'settings' && !fxOn) {
+      drawChip(ctx, {
+        id: 'mute', x: W - 24 - CHIP_W, y: 20, w: CHIP_W, h: CHIP_H,
+        icon: 'sound', iconOn: !s.muted, face: 'paper', pressed: isPressed(s, 'mute')
+      });
+      registerUI('mute', W - 24 - CHIP_W, 20, CHIP_W, CHIP_H);
+    }
+
+    // 卡下方键帽行（桌边固定的次级信息，三页一致）
     drawKeyRow(ctx, W / 2, 624, [
       { t: 'P1 ' }, { k: 'W' }, { t: ' 或 ' }, { k: '空格' }, { g: 16 },
       { t: 'P2 ' }, { k: '↑' }, { t: ' 或 ' }, { k: 'Enter' }, { g: 16 },
@@ -1143,7 +1366,6 @@
     ], 13);
 
     if (s.portrait) drawPortraitHint(ctx, s);
-    ctx.restore();
   }
 
   // 粒子发射与推进：下一阶段补充

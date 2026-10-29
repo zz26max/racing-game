@@ -8,9 +8,13 @@
   var BEST_KEY = 'slotrace.best';
   var MUTE_KEY = 'slotrace.muted';  // 静音状态持久化（'1' 静音 / '0' 有声）
   var TRACK_KEY = 'slotrace.track';   // 标题界面选择的赛道（localStorage 持久化）
+  var LAPS_KEY = 'slotrace.laps';     // 设置页圈数（3 / 5）
+  var SHAKE_KEY = 'slotrace.shake';   // 设置页镜头震动（'1' 开 / '0' 关）
   var FALLBACK = '#C98B55';
   var DEFAULT_LAPS = 3;    // 默认圈数（无头截图可用 ?laps=N 覆盖）
   var MAX_FF_STEPS = 72000; // ?ff 快进上限（600 秒），防止参数异常卡死
+  var MENU_ANIM_DUR = 0.46; // 标题换页时长，与 render.js 同值
+  var START_FX_DUR = 0.42;  // 开始游戏纸卡转场时长，与 render.js 同值
 
   var canvas = document.getElementById('game');
   // HUD 画在独立的 2D 叠加层上，3D 场景由 RaceGL 画在 #game
@@ -23,6 +27,12 @@
   var phase = 'title', race = null, time = 0, best = null;
   var pausedFrom = null, acc = 0, last = 0, warmed = false;
   var freeze = false;   // ?freeze=1：快进后冻结比赛推进，只保留渲染与 rAF
+  // 标题菜单：三页纸卡（菜单 / 教程 / 设置）与转场时刻
+  var menuView = 'menu';
+  var menuAnim = null;              // { from, to, t0, dir }
+  var startFx = null;               // { t0 }：开始游戏的纸卡压镜头转场
+  var menuEnter = -999;             // 回到标题时纸卡落桌的起始时刻；初次加载直接呈现
+  var settings = { laps: DEFAULT_LAPS, shake: true };
 
   // 历史最佳圈存为整数毫秒
   function readBest() {
@@ -68,10 +78,21 @@
     return isFinite(n) ? n : null;
   }
 
-  // ?laps=N：圈数取整，非法或小于 1 回落默认 3
+  // 读设置页偏好：非法/缺失一律回落默认（3 圈、震动开）
+  function readSettings() {
+    try {
+      var laps = parseInt(window.localStorage.getItem(LAPS_KEY), 10);
+      if (laps === 3 || laps === 5) settings.laps = laps;
+    } catch (errL) { /* 隐私模式静默 */ }
+    try {
+      if (window.localStorage.getItem(SHAKE_KEY) === '0') settings.shake = false;
+    } catch (errS) { /* 隐私模式静默 */ }
+  }
+
+  // ?laps=N：圈数取整，非法或小于 1 回落设置页圈数（默认 3）
   function readLaps() {
     var n = readNumParam('laps');
-    if (n === null || n < 1) return DEFAULT_LAPS;
+    if (n === null || n < 1) return settings.laps;
     return Math.floor(n);
   }
 
@@ -87,6 +108,7 @@
         if (trackList[i].id === saved) { trackId = saved; break; }
       }
     }
+    readSettings();
     try { track = window.RaceTrack ? window.RaceTrack.createTrack(trackId) : null; } catch (err) { track = null; trackId = 'figure8'; }
     try {
       var built = window.RaceScene && track ? window.RaceScene.build(track) : null;
@@ -114,9 +136,11 @@
     best = readBest();
   }
 
-  // 开局：两辆车各入一条槽，圈数由 ?laps=N 决定（默认 3）
+  // 开局：两辆车各入一条槽，圈数由 ?laps=N 或设置页决定（默认 3）
   function startRace() {
     releaseAllPointers();
+    menuAnim = null;
+    startFx = null;
     if (!window.RaceRace || !window.RaceCar || !track) return;
     race = window.RaceRace.createRace({
       track: track,
@@ -201,6 +225,10 @@
     phase = 'title';
     race = null;
     acc = 0;
+    menuView = 'menu';
+    menuAnim = null;
+    startFx = null;
+    menuEnter = time;   // 回标题时纸卡从桌下落到桌面
     portraitHintDismissed = false;
     releaseAllPointers();
   }
@@ -212,12 +240,44 @@
     try { window.localStorage.setItem(MUTE_KEY, next ? '1' : '0'); } catch (err) { /* 隐私模式静默 */ }
   }
 
+  // 标题换页：menu / tutorial / settings 三页纸卡，按菜单顺序决定滑入方向
+  var MENU_ORDER = { menu: 0, tutorial: 1, settings: 2 };
+  function showMenuView(next) {
+    if (phase !== 'title' || startFx) return;
+    if (next !== 'menu' && next !== 'tutorial' && next !== 'settings') return;
+    if (next === menuView) return;
+    if (menuAnim && time - menuAnim.t0 < MENU_ANIM_DUR) return;   // 换页途中不接受新跳转
+    var dir = MENU_ORDER[next] >= MENU_ORDER[menuView] ? 1 : -1;
+    menuAnim = { from: menuView, to: next, t0: time, dir: dir };
+    menuView = next;
+  }
+
+  // 开始游戏：先播纸卡压镜头转场，结束后 tick 里再真正开赛
+  function beginStart() {
+    if (phase !== 'title' || menuView !== 'menu' || menuAnim || startFx) return;
+    startFx = { t0: time };
+  }
+
+  function setLaps(n) {
+    settings.laps = n === 5 ? 5 : 3;
+    try { window.localStorage.setItem(LAPS_KEY, String(settings.laps)); } catch (err) { /* 隐私模式静默 */ }
+  }
+
+  function setShake(on) {
+    settings.shake = !!on;
+    try { window.localStorage.setItem(SHAKE_KEY, settings.shake ? '1' : '0'); } catch (err) { /* 隐私模式静默 */ }
+  }
+
   function runUIAction(id) {
     if (id === 'pause' || id === 'resume') togglePause();
-    else if (id === 'start') { if (phase === 'title' || phase === 'finished') startRace(); }
+    else if (id === 'start') beginStart();
+    else if (id === 'tutorial' || id === 'settings') showMenuView(id);
+    else if (id === 'menuBack') showMenuView('menu');
+    else if (id === 'optSound' || id === 'mute') toggleMute();
+    else if (id === 'optLaps') setLaps(settings.laps === 5 ? 3 : 5);
+    else if (id === 'optShake') setShake(!settings.shake);
     else if (id === 'restart' || id === 'again') startRace();
     else if (id === 'back') backToTitle();
-    else if (id === 'mute') toggleMute();
     else if (id === 'portraitDismiss') portraitHintDismissed = true;
     var D = window.__DBG__ || (window.__DBG__ = {});
     D.ui = id;
@@ -279,6 +339,12 @@
   function onPointerDown(e) {
     try { if (hudCanvas && hudCanvas.focus) hudCanvas.focus(); } catch (err) { /* 忽略 */ }
 
+    // 开始转场期间整屏不接收点击（纸卡正在压向镜头，马上切入倒计时）
+    if (startFx) {
+      if (e && e.preventDefault) e.preventDefault();
+      return;
+    }
+
     // 屏上按钮最先消费：比赛里点芯片不能变成半屏油门，标题里点喇叭不能开赛
     var R = window.RaceRender;
     var uiHit = null;
@@ -306,8 +372,10 @@
     }
 
     if (phase !== 'title' && phase !== 'finished') return;
+    // 切赛道只在菜单页生效：教程/设置页的同一片区域留给纸卡转场，不切赛道
+    var inMenu = phase === 'title' && menuView === 'menu' && !menuAnim;
     var hit = null;
-    if (R) {
+    if (R && inMenu) {
       var p = toLogical(e);
       try { hit = typeof R.hitTestTitleArrow === 'function' ? R.hitTestTitleArrow(p.x, p.y) : null; } catch (err2) { hit = null; }
       if (!hit && typeof R.hitTestTitleRow === 'function') {
@@ -316,8 +384,11 @@
     }
     if (hit === 'left') { switchTrack(-1); return; }
     if (hit === 'right') { switchTrack(1); return; }
-    // 手机点按任意处开始；鼠标点击维持旧行为（只聚焦）
-    if (!e || e.pointerType !== 'mouse') startRace();
+    // 手机点按任意处开始（仅菜单页）；鼠标点击维持旧行为（只聚焦）
+    if (!e || e.pointerType !== 'mouse') {
+      if (phase === 'finished') startRace();
+      else if (inMenu) beginStart();
+    }
   }
 
   function onPointerUp(e) {
@@ -338,16 +409,37 @@
     setZoneHeld(nz, true);
   }
 
-  // Enter 开始 / R 重开 / P 暂停 / M 静音 / Esc 回标题
+  // Enter 开始 / R 重开 / P 暂停 / M 静音 / Esc 回标题（标题里 Esc/Enter 从子页返回菜单）
   function handleInput() {
     if (!input) return;
     if (phase === 'title') {
-      if (input.consume('left')) { switchTrack(-1); return; }
-      if (input.consume('right')) { switchTrack(1); return; }
+      // 转场中吞掉按键，避免连按导致重复开赛或换页叠层
+      if (startFx || menuAnim) {
+        input.consume('left'); input.consume('right');
+        input.consume('start'); input.consume('back'); input.consume('restart');
+        return;
+      }
+      if (menuView === 'menu') {
+        if (input.consume('left')) { switchTrack(-1); return; }
+        if (input.consume('right')) { switchTrack(1); return; }
+        if (input.consume('start') || input.consume('restart')) { beginStart(); return; }
+        if (input.consume('mute')) toggleMute();
+        input.consume('pause');
+        input.consume('back');
+        return;
+      }
+      // 教程 / 设置页：Esc 或 Enter 返回菜单
+      if (input.consume('back') || input.consume('start')) { showMenuView('menu'); return; }
+      if (input.consume('mute')) toggleMute();
+      input.consume('left');
+      input.consume('right');
+      input.consume('pause');
+      input.consume('restart');
+      return;
     }
     input.consume('left');
     input.consume('right');
-    if (input.consume('start') && (phase === 'title' || phase === 'finished')) startRace();
+    if (input.consume('start') && phase === 'finished') startRace();
     if (input.consume('restart')) startRace();
     if (input.consume('mute')) toggleMute();
     if (input.consume('back')) backToTitle();
@@ -396,9 +488,12 @@
       var car = race.entries[i].car;
       if (!car) { saveArmed[i] = false; continue; }
       // 镜头震动：脱轨瞬间强震，落地瞬间中震（3D 路径；2D 兜底无相机，自然忽略）
+      // 设置页可关（敏感玩家/录屏），关闭后不再调用 gl.shake
       var dt2 = Number(car.derailT) || 0;
-      if (car.derailed && prevDerailT[i] === 0 && dt2 > 0 && gl && typeof gl.shake === 'function') gl.shake(9);
-      if (car.derailed && prevDerailT[i] <= FLY_GUARD && dt2 > FLY_GUARD && gl && typeof gl.shake === 'function') gl.shake(5);
+      if (settings.shake) {
+        if (car.derailed && prevDerailT[i] === 0 && dt2 > 0 && gl && typeof gl.shake === 'function') gl.shake(9);
+        if (car.derailed && prevDerailT[i] <= FLY_GUARD && dt2 > FLY_GUARD && gl && typeof gl.shake === 'function') gl.shake(5);
+      }
       prevDerailT[i] = dt2;
       if (!audio) continue;
       if (car.derailed) { saveArmed[i] = false; continue; }
@@ -516,6 +611,12 @@
     handleInput();
     if (phase === 'paused') { acc = 0; updateDbg(); return; }
     time += dt;
+    // 转场计时：开始纸卡播完才真正开赛；换页动画结束即恢复按钮命中
+    if (startFx && time - startFx.t0 >= START_FX_DUR) {
+      startFx = null;
+      startRace();
+    }
+    if (menuAnim && time - menuAnim.t0 >= MENU_ANIM_DUR) menuAnim = null;
     if (phase === 'countdown' || phase === 'running') step(dt);
     countdownSounds();
     engineSounds(dt);
@@ -570,6 +671,12 @@
       race: race, best: best, particles: [],
       trackName: track ? track.name : '', trackDesc: track ? track.desc : '',
       trackIndex: trackIndex(), trackCount: trackList.length,
+      menuView: menuView,
+      menuAnim: menuAnim ? { from: menuAnim.from, to: menuAnim.to, t0: menuAnim.t0, dir: menuAnim.dir } : null,
+      startFx: startFx ? startFx.t0 : 0,
+      menuEnter: menuEnter,
+      laps: settings.laps,
+      settings: { laps: settings.laps, shake: settings.shake },
       portrait: (window.innerHeight || H) > (window.innerWidth || W),
       portraitHint: !portraitHintDismissed,
       muted: audio ? !!audio.isMuted() : false,
@@ -591,7 +698,7 @@
       hudCtx.textAlign = 'right';
       hudCtx.textBaseline = 'bottom';
       hudCtx.fillStyle = 'rgba(233,220,196,.45)';
-      hudCtx.fillText('build 14 · ' + trackList.length + ' tracks', W - 8, H - 6);
+      hudCtx.fillText('build 18 · ' + trackList.length + ' tracks', W - 8, H - 6);
       hudCtx.restore();
     } else if (typeof window.RaceRender.drawHUD === 'function') {
       window.RaceRender.drawHUD(hudCtx, state);

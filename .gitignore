@@ -6,3 +6,4 @@ _debug/*
 !_debug/_mk-attic-track.js
 !_debug/_seg-audit.js
 !_debug/_boot-sim.js
+!_debug/_feel-cdp.js

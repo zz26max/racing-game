@@ -285,11 +285,49 @@ test('UI：各阶段芯片注册命中区，触控目标 ≥44 且不与油门�
   assert.ok(againHit === 'again' || againHit === 'back', '结算页应有按钮命中，实际 ' + againHit);
   assert.ok(backHit === 'again' || backHit === 'back', '结算页应有按钮命中，实际 ' + backHit);
 
-  // 标题阶段：右上角静音芯片；油门区（下半屏）不应注册任何按钮
+  // 标题菜单页：右上角静音芯片 + 三枚菜单芯片；油门区（下半屏）不应注册任何按钮
   R.drawTitle(ctx, { phase: 'title', time: 0, trackName: '阁楼复刻', trackDesc: '', trackCount: 2, muted: false, pressed: [] });
   assert.equal(R.hitTestUI(1233, 42), 'mute', '标题静音芯片应命中');
-  assert.equal(R.hitTestUI(640, 536), 'start', '开始比赛按钮应命中');
+  assert.equal(R.hitTestUI(480, 532), 'start', '开始游戏按钮应命中');
+  assert.equal(R.hitTestUI(720, 530), 'tutorial', '教程按钮应命中');
+  assert.equal(R.hitTestUI(876, 530), 'settings', '设置按钮应命中');
+  assert.equal(R.hitTestUI(651, 505), 'tutorial', '教程芯片左上角应命中（触控目标 140×52）');
+  assert.equal(R.hitTestUI(789, 555), 'tutorial', '教程芯片右下角应命中');
   assert.equal(R.hitTestUI(100, 600), null, '标题下半屏（点按开始区）不应注册按钮');
+
+  // 教程页：返回键 + 静音芯片仍在；开始按钮不再注册
+  R.drawTitle(ctx, { phase: 'title', time: 0, trackName: '阁楼复刻', trackDesc: '', trackCount: 2, muted: false, pressed: [], menuView: 'tutorial' });
+  assert.equal(R.hitTestUI(640, 544), 'menuBack', '教程页返回键应命中');
+  assert.equal(R.hitTestUI(480, 532), null, '教程页不应注册开始按钮');
+  assert.equal(R.hitTestUI(1233, 42), 'mute', '教程页仍有静音芯片');
+
+  // 设置页：三行开关（音效 / 圈数 / 镜头震动）+ 返回；音效行已在页内，不再重复右上角芯片
+  R.drawTitle(ctx, { phase: 'title', time: 0, trackCount: 2, muted: false, pressed: [], menuView: 'settings', settings: { laps: 5, shake: false } });
+  assert.equal(R.hitTestUI(890, 316), 'optSound', '设置页音效行应命中');
+  assert.equal(R.hitTestUI(890, 390), 'optLaps', '设置页圈数行应命中');
+  assert.equal(R.hitTestUI(890, 464), 'optShake', '设置页震动行应命中');
+  assert.equal(R.hitTestUI(801, 293), 'optSound', '设置芯片左上角应命中（触控目标 180×48）');
+  assert.equal(R.hitTestUI(979, 339), 'optSound', '设置芯片右下角应命中');
+  assert.equal(R.hitTestUI(799, 316), null, '设置芯片外 1px 不应命中');
+  assert.equal(R.hitTestUI(640, 544), 'menuBack', '设置页返回键应命中');
+  assert.equal(R.hitTestUI(1233, 42), null, '设置页不重复注册静音芯片');
+
+  // 换页动画中不注册页内按钮（避免点到还没落位的芯片），桌边静音芯片保留
+  R.drawTitle(ctx, { phase: 'title', time: 0.1, trackCount: 2, muted: false, pressed: [], menuView: 'tutorial', menuAnim: { from: 'menu', to: 'tutorial', t0: 0, dir: 1 } });
+  assert.equal(R.hitTestUI(640, 544), null, '换页动画中不应注册按钮');
+  assert.equal(R.hitTestUI(1233, 42), 'mute', '换页动画中静音芯片仍可用');
+  R.drawTitle(ctx, { phase: 'title', time: 0.5, trackCount: 2, muted: false, pressed: [], menuView: 'tutorial', menuAnim: { from: 'menu', to: 'tutorial', t0: 0, dir: 1 } });
+  assert.equal(R.hitTestUI(640, 544), 'menuBack', '换页动画结束后按钮恢复命中');
+
+  // 开始转场：纸卡压向镜头期间整屏不响应按钮
+  R.drawTitle(ctx, { phase: 'title', time: 1, trackCount: 2, muted: false, pressed: [], startFx: 1 });
+  assert.equal(R.hitTestUI(480, 532), null, '开始转场中不注册开始按钮');
+  assert.equal(R.hitTestUI(1233, 42), null, '开始转场中静音芯片也不再响应');
+
+  // 落桌：回到标题 0.5s 内页内按钮不注册，静音芯片先就位
+  R.drawTitle(ctx, { phase: 'title', time: 1.2, trackCount: 2, muted: false, pressed: [], menuEnter: 1 });
+  assert.equal(R.hitTestUI(480, 532), null, '落桌动画中不注册页内按钮');
+  assert.equal(R.hitTestUI(1233, 42), 'mute', '落桌动画中静音芯片可用');
 
   // 竖屏遮罩：portrait 时全屏可点，且优先于其他按钮（最后注册 = 最上层）
   R.drawHUD(ctx, { phase: 'running', time: 0, race: null, muted: false, pressed: [], portrait: true });
